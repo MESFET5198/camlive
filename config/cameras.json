@@ -1,0 +1,19 @@
+[
+  {
+    "id": "insta360",
+    "name": "Insta360 Ace Pro",
+    "auto_name": true,
+    "device": "/dev/video0",
+    "mode": "h264",
+    "width": 1920,
+    "height": 1080,
+    "fps": 30,
+    "bitrate": "4M",
+    "printer": "http://192.168.31.107:7125",
+    "usb_vendor": "2e1a",
+    "usb_reset": true,
+    "sleep": false,
+    "sleep_no_viewer": false,
+    "timelapse": true
+  }
+]

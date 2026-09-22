@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>打印效果模拟器</title>
+<style>
+  *{box-sizing:border-box}
+  body{margin:0;background:#101014;color:#ddd;font-family:sans-serif}
+  h1{font-size:18px;font-weight:400;margin:14px 20px}
+  .wrap{display:flex;gap:16px;padding:0 20px 30px;flex-wrap:wrap}
+  .panel{background:#1a1a1f;border:1px solid #333;border-radius:10px;padding:16px;width:300px;align-self:flex-start}
+  .panel h3{font-size:14px;font-weight:400;margin:12px 0 8px;color:#aaa;border-bottom:1px solid #2a2a30;padding-bottom:6px}
+  .panel h3:first-child{margin-top:0}
+  label{display:block;font-size:12px;color:#aaa;margin:8px 0 3px}
+  input[type=number],input[type=text]{width:100%;background:#242429;color:#eee;border:1px solid #444;border-radius:5px;padding:7px 9px;font-size:14px}
+  .drop{border:2px dashed #444;border-radius:8px;padding:22px 10px;text-align:center;color:#888;font-size:13px;cursor:pointer;transition:.2s}
+  .drop.over{border-color:#0a7dff;color:#0a7dff}
+  .info{font-size:12px;line-height:1.7;color:#bbb}
+  .info b{color:#fff;font-weight:400}
+  .rating{font-size:13px;padding:8px 10px;border-radius:6px;margin-top:8px}
+  .main{flex:1;min-width:520px}
+  .view{position:relative;background:#000;border:1px solid #333;border-radius:8px;overflow:hidden}
+  canvas{display:block}
+  .slider{position:absolute;top:0;bottom:0;width:2px;background:#0a7dff;pointer-events:none}
+  .lbl{position:absolute;top:6px;font-size:11px;padding:3px 8px;border-radius:4px;background:rgba(0,0,0,.6)}
+  .lbl.a{left:8px;color:#6f6}
+  .lbl.b{right:8px;color:#f77}
+  input[type=range]{width:100%;margin-top:8px}
+  .hint{font-size:11px;color:#777;margin-top:6px}
+  .detail{display:flex;gap:12px;margin-top:12px;flex-wrap:wrap}
+  .detail .box{background:#1a1a1f;border:1px solid #333;border-radius:8px;padding:10px;text-align:center}
+  .detail .box .cap{font-size:12px;color:#aaa;margin-bottom:6px}
+  .detail canvas{image-rendering:auto;background:#000;border-radius:4px}
+</style>
+</head>
+<body>
+<h1>FDM 3D 打印效果模拟器 — 模糊预览</h1>
+<div class="wrap">
+  <div class="panel">
+    <h3>图片</h3>
+    <div class="drop" id="drop">点击或拖入图片<br><span style="font-size:11px">PNG / JPG</span></div>
+    <input type="file" id="file" accept="image/*" style="display:none">
+    <h3>参数</h3>
+    <label>挤出线宽 (mm)</label>
+    <input type="number" id="dot" value="0.42" step="0.01" min="0.05">
+    <label>层高 (mm)</label>
+    <input type="number" id="layerH" value="0.2" step="0.01" min="0.05">
+    <label>打印方向（挤出线方向）</label>
+    <select id="dir" style="width:100%;background:#242429;color:#eee;border:1px solid #444;border-radius:5px;padding:7px 9px;font-size:14px">
+      <option value="h">横向（线水平，逐行向下）</option>
+      <option value="v">纵向（线垂直，逐列向右）</option>
+    </select>
+    <label>图片 DPI</label>
+    <input type="number" id="dpi" value="72" step="1" min="1">
+    <label>打印方式</label>
+    <select id="mode" style="width:100%;background:#242429;color:#eee;border:1px solid #444;border-radius:5px;padding:7px 9px;font-size:14px">
+      <option value="single">单张打印</option>
+      <option value="tile">拼接打印</option>
+    </select>
+    <div id="tilecfg" style="display:none">
+      <label>拼接块数 宽 × 高</label>
+      <div style="display:flex;gap:8px">
+        <input type="number" id="tilesW" value="2" step="1" min="1">
+        <input type="number" id="tilesH" value="4" step="1" min="1">
+      </div>
+      <label>每块面积 长 × 宽 (mm)</label>
+      <div style="display:flex;gap:8px">
+        <input type="number" id="tileW" value="250" step="1" min="10">
+        <input type="number" id="tileH" value="250" step="1" min="10">
+      </div>
+    </div>
+    <div id="bedcfg">
+      <label>打印宽度 (mm) — 高度按图片比例自动</label>
+      <input type="number" id="bedW" value="270" step="1" min="10">
+      <div style="font-size:11px;color:#888;margin-top:4px" id="bedAuto"></div>
+    </div>
+    <h3>计算结果</h3>
+    <div class="info" id="info">请先加载图片</div>
+    <div class="rating" id="rating" style="display:none"></div>
+  </div>
+  <div class="main">
+    <div class="view" id="view">
+      <canvas id="cview"></canvas>
+      <div class="slider" id="slider"></div>
+      <div class="lbl a" id="lblA">原图</div>
+      <div class="lbl b" id="lblB">模拟打印效果</div>
+    </div>
+    <input type="range" id="divider" min="0" max="100" value="50">
+    <div class="hint">拖动上方滑块对比原图与模拟打印效果；移动鼠标到图中查看细节放大对比</div>
+    <div class="detail">
+      <div class="box"><div class="cap">细节 · 原图</div><canvas id="dA"></canvas></div>
+      <div class="box"><div class="cap">细节 · 模拟打印</div><canvas id="dB"></canvas></div>
+    </div>
+  </div>
+</div>
+<script>
+var img = null;
+var sim = document.createElement("canvas");
+var DSCALE = 3, DSIZE = 150;
+(function(){
+  var drop = document.getElementById("drop");
+  var file = document.getElementById("file");
+  drop.onclick = function(){ file.click(); };
+  drop.ondragover = function(e){ e.preventDefault(); drop.classList.add("over"); };
+  drop.ondragleave = function(){ drop.classList.remove("over"); };
+  drop.ondrop = function(e){ e.preventDefault(); drop.classList.remove("over"); if (e.dataTransfer.files[0]) loadFile(e.dataTransfer.files[0]); };
+  file.onchange = function(){ if (this.files[0]) loadFile(this.files[0]); };
+})();
+function loadFile(f){
+  var r = new FileReader();
+  r.onload = function(){
+    var im = new Image();
+    im.onload = function(){
+      img = im;
+      sim.width = im.width; sim.height = im.height;
+      render();
+      document.getElementById("drop").innerHTML = f.name + '<br><span style="font-size:11px">' + im.width + ' × ' + im.height + ' px</span>';
+    };
+    im.src = r.result;
+  };
+  r.readAsDataURL(f);
+}
+function fdmTexture(canvas, linePx, dir){
+  // 挤出线圆柱高光 + 表面粗糙度
+  var ctx = canvas.getContext("2d");
+  var W = canvas.width, H = canvas.height;
+  var id = ctx.getImageData(0, 0, W, H);
+  var d = id.data;
+  var px = W * H;
+  var rnd = 0;
+  for (var p = 0; p < px; p++){
+    var x = p % W, y = (p / W) | 0;
+    var pos = dir === "h" ? y : x;
+    var t = ((pos % linePx) + 0.5) / linePx;   // 0..1 线上位置
+    var f = 1 + 0.10 * Math.cos(2 * Math.PI * (t - 0.5));
+    rnd = (rnd * 1103515245 + 12345) & 0x7fffffff;
+    f += ((rnd / 0x7fffffff) - 0.5) * 0.05;
+    var i = p * 4;
+    d[i]     = d[i]     * f;
+    d[i + 1] = d[i + 1] * f;
+    d[i + 2] = d[i + 2] * f;
+  }
+  ctx.putImageData(id, 0, 0);
+}
+function render(){
+  if (!img) return;
+  var dpi = parseFloat(document.getElementById("dpi").value) || 72;
+  var dot = parseFloat(document.getElementById("dot").value) || 0.42;
+  var mode = document.getElementById("mode").value;
+  var W = img.width, H = img.height;
+  var mmW = W / dpi * 25.4, mmH = H / dpi * 25.4;
+  var bedW, bedH, extra = "";
+  if (mode === "tile") {
+    var cols = Math.max(1, parseInt(document.getElementById("tilesW").value) || 1);
+    var rows = Math.max(1, parseInt(document.getElementById("tilesH").value) || 1);
+    var tW = parseFloat(document.getElementById("tileW").value) || 250;
+    var tH = parseFloat(document.getElementById("tileH").value) || 250;
+    bedW = cols * tW;
+    bedH = rows * tH;
+    extra = "拼接方式: <b>" + cols + " × " + rows + " 块</b>（每块 " + tW + " × " + tH + " mm）<br>" +
+            "拼接总面积: <b>" + (bedW/10).toFixed(1) + " × " + (bedH/10).toFixed(1) + " cm</b><br>";
+  } else {
+    bedW = parseFloat(document.getElementById("bedW").value) || 270;
+    bedH = bedW * H / W;
+    document.getElementById("bedAuto").textContent =
+      "自动高度: " + (bedH).toFixed(1) + " mm (" + (bedH/10).toFixed(1) + " cm) — 与图片比例一致";
+  }
+  var scale = Math.min(1, bedW / mmW, bedH / mmH);
+  var fitW = mmW * scale, fitH = mmH * scale;
+  var dw = Math.max(1, Math.round(fitW / dot));
+  var dh = Math.max(1, Math.round(fitH / dot));
+  var n = Math.max(W / dw, H / dh);
+  var sc = sim.getContext("2d");
+  sc.clearRect(0, 0, W, H);
+  sc.imageSmoothingEnabled = true;
+  sc.imageSmoothingQuality = "high";
+  sc.drawImage(img, 0, 0, dw, dh);
+  sc.drawImage(sim, 0, 0, dw, dh, 0, 0, W, H);
+  fdmTexture(sim, Math.max(1, W / dw), document.getElementById("dir").value);
+  var effDpi = 25.4 / dot;
+  var layerH = parseFloat(document.getElementById("layerH").value) || 0.2;
+  var dirH = document.getElementById("dir").value === "h";
+  var info = document.getElementById("info");
+  info.innerHTML = extra +
+    "原始物理尺寸: <b>" + (mmW/10).toFixed(1) + " × " + (mmH/10).toFixed(1) + " cm</b><br>" +
+    (scale < 1 ?
+      "超出打印面积, 缩放至: <b>" + (fitW/10).toFixed(1) + " × " + (fitH/10).toFixed(1) + " cm</b> (" + (scale*100).toFixed(1) + "%)<br>" :
+      "在打印面积内, 无需缩放<br>") +
+    "水平分辨率: <b>" + effDpi.toFixed(1) + " DPI</b>（线宽 " + (dot*1000).toFixed(0) + " µm，层高 " + (layerH*1000).toFixed(0) + " µm）<br>" +
+    "挤出线总数: <b>" + (dirH ? dh : dw) + " 条</b><br>" +
+    "每线宽覆盖像素: <b>" + n.toFixed(1) + "</b>";
+  var rating = document.getElementById("rating");
+  rating.style.display = "block";
+  var txt, color;
+  if (n <= 1.0)      { txt = "清晰 — 线宽密度足以表达全部像素细节"; color = "#18331f"; }
+  else if (n <= 1.3) { txt = "轻微模糊 — 相邻像素略有融合，肉眼不易察觉"; color = "#2a3318"; }
+  else if (n <= 2.0) { txt = "明显模糊 — 细节开始丢失，细线/文字边缘发虚"; color = "#3a2c18"; }
+  else               { txt = "严重模糊 — 细节大面积丢失，只适合远距离观看"; color = "#3a1a18"; }
+  rating.textContent = "评级: " + txt;
+  rating.style.background = color;
+  rating.style.border = "1px solid #555";
+  drawView();
+  drawDetail();
+}
+var viewC = document.getElementById("cview").getContext("2d");
+var vw = 960;
+function drawView(){
+  if (!img) return;
+  var ratio = img.height / img.width;
+  var cv = document.getElementById("cview");
+  cv.width = vw;
+  cv.height = Math.round(vw * ratio);
+  viewC.imageSmoothingEnabled = true;
+  viewC.imageSmoothingQuality = "high";
+  viewC.drawImage(sim, 0, 0, vw, cv.height);
+  var p = parseInt(document.getElementById("divider").value) / 100;
+  var w = Math.round(vw * p);
+  viewC.save();
+  viewC.beginPath();
+  viewC.rect(0, 0, w, cv.height);
+  viewC.clip();
+  viewC.drawImage(img, 0, 0, vw, cv.height);
+  viewC.restore();
+  document.getElementById("slider").style.left = (w / vw * 100) + "%";
+}
+document.getElementById("divider").oninput = drawView;
+var dA = document.getElementById("dA").getContext("2d");
+var dB = document.getElementById("dB").getContext("2d");
+var pos = {x: 0.5, y: 0.5};
+function drawDetail(){
+  if (!img) return;
+  var cx = Math.round(pos.x * img.width), cy = Math.round(pos.y * img.height);
+  var s = DSIZE, h = Math.round(s / 2);
+  var sx = Math.max(0, Math.min(img.width - s, cx - h));
+  var sy = Math.max(0, Math.min(img.height - s, cy - h));
+  dA.canvas.width = dB.canvas.width = s * DSCALE;
+  dA.canvas.height = dB.canvas.height = s * DSCALE;
+  dA.imageSmoothingEnabled = false;
+  dB.imageSmoothingEnabled = false;
+  dA.drawImage(img, sx, sy, s, s, 0, 0, s * DSCALE, s * DSCALE);
+  dB.drawImage(sim, sx, sy, s, s, 0, 0, s * DSCALE, s * DSCALE);
+}
+document.getElementById("view").onmousemove = function(e){
+  var r = e.target.getBoundingClientRect();
+  pos.x = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+  pos.y = Math.max(0, Math.min(1, (e.clientY - r.top) / r.height));
+  drawDetail();
+};
+document.getElementById("dot").oninput = render;
+document.getElementById("layerH").oninput = render;
+document.getElementById("dir").onchange = render;
+document.getElementById("dpi").oninput = render;
+document.getElementById("bedW").oninput = render;
+document.getElementById("tilesW").oninput = render;
+document.getElementById("tilesH").oninput = render;
+document.getElementById("tileW").oninput = render;
+document.getElementById("tileH").oninput = render;
+document.getElementById("mode").onchange = function(){
+  var tile = this.value === "tile";
+  document.getElementById("tilecfg").style.display = tile ? "block" : "none";
+  document.getElementById("bedcfg").style.display = tile ? "none" : "block";
+  render();
+};
+</script>
+</body>
+</html>

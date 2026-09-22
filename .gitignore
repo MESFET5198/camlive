@@ -1,0 +1,18 @@
+# Runtime media and generated files
+*.ts
+*.m3u8
+*.mp4
+*.jpg
+*.jpeg
+*.png
+*.log
+logs/
+TimeLapse/
+timelapse/
+
+# Runtime/editor artifacts
+__pycache__/
+*.pyc
+*.bak
+*.bak.*
+.DS_Store

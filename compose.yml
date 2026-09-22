@@ -1,0 +1,27 @@
+# camlive 使用说明:
+#   1. mkdir -p config (可空, 首次启动自动填充默认配置)
+#   2. 按你的机器修改 devices 段(摄像头设备节点, 数量可能不同)
+#   3. 编辑 config/cameras.json (相机名称/设备路径/打印机地址)
+#   4. docker compose up -d
+services:
+  camlive:
+    image: camlive:generic
+    container_name: camlive
+    restart: always
+    devices:
+      # 摄像头设备节点: 按实际机器修改
+      - /dev/video0:/dev/video0
+      - /dev/video1:/dev/video1
+      - /dev/video2:/dev/video2
+      - /dev/video3:/dev/video3
+      # Intel 核显(VAAPI 硬编码用); AMD/其他机器可删掉此行(自动回退软编码)
+      - /dev/dri/renderD128:/dev/dri/renderD128
+    volumes:
+      - /sys/bus/usb/devices:/sys/bus/usb/devices:rw
+      - ./config:/app
+      # 延时拍摄录像存储(飞牛NAS /vol2/1000/TimeLapse)
+      - /vol2/1000/TimeLapse:/timelapse
+    ports:
+      - "${PORT:-8081}:8081"
+    environment:
+      - PORT=${PORT:-8081}
