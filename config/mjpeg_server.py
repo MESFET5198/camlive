@@ -21,9 +21,14 @@ else:
     input_args = ["-f", "v4l2", "-input_format", "mjpeg",
                   "-video_size", "%dx%d" % (W, H), "-framerate", str(FPS),
                   "-i", dev]
+filters = []
+if int(cam.get("rotate", 0)) == 180:
+    filters.append("transpose=2,transpose=2")
+output_args = ["-f", "mpjpeg", "-q:v", "3"]
+if filters:
+    output_args += ["-vf", ",".join(filters)]
 ff = subprocess.Popen(
-    ["ffmpeg", "-hide_banner", "-loglevel", "error"] + input_args +
-    ["-f", "mpjpeg", "-q:v", "3", "pipe:1"],
+    ["ffmpeg", "-hide_banner", "-loglevel", "error"] + input_args + output_args + ["pipe:1"],
     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
 clients = set()
