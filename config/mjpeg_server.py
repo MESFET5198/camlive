@@ -15,11 +15,15 @@ cams = json.load(open("/app/cameras.json"))
 cam = next(c for c in cams if c["id"] == cid)
 W, H, FPS = int(cam["width"]), int(cam["height"]), int(cam["fps"])
 
+if dev.startswith(("http://", "https://")):
+    input_args = ["-f", "mpjpeg", "-i", dev]
+else:
+    input_args = ["-f", "v4l2", "-input_format", "mjpeg",
+                  "-video_size", "%dx%d" % (W, H), "-framerate", str(FPS),
+                  "-i", dev]
 ff = subprocess.Popen(
-    ["ffmpeg", "-hide_banner", "-loglevel", "error",
-     "-f", "v4l2", "-input_format", "mjpeg",
-     "-video_size", "%dx%d" % (W, H), "-framerate", str(FPS),
-     "-i", dev, "-f", "mpjpeg", "-q:v", "3", "pipe:1"],
+    ["ffmpeg", "-hide_banner", "-loglevel", "error"] + input_args +
+    ["-f", "mpjpeg", "-q:v", "3", "pipe:1"],
     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
 clients = set()

@@ -5,6 +5,16 @@ ID=$1
 export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 eval "$(python3 /app/cam_conf.py "$ID")" || exit 1
 
+# 网络 MJPEG 摄像头（例如打印机自带 Crowsnest 摄像头）直接转成 HLS。
+# 这一路不经过 v4l2-ctl，也不需要本机 /dev/video 设备。
+if [[ "$DEV" == http://* || "$DEV" == https://* ]]; then
+  exec ffmpeg -hide_banner -loglevel warning \
+    -f mpjpeg -i "$DEV" -vf "scale=${W}:${H}" -c:v libx264 -preset veryfast -tune zerolatency \
+    -r "${FPS}" -fps_mode cfr -b:v "${BITRATE}" -maxrate "${BITRATE}" -bufsize "${BUFSIZE}" \
+    -g "$((FPS*2))" -f hls -hls_time 2 -hls_list_size 4 -hls_flags delete_segments \
+    "/app/${ID}.m3u8"
+fi
+
 # 先用 v4l2-ctl 强制设置 MJPG 分辨率，校验失败重试(摄像头切换分辨率时常有怪癖)
 for i in 1 2 3 4 5 6; do
   v4l2-ctl -d "$DEV" --set-fmt-video=width=${W},height=${H},pixelformat=MJPG >/dev/null 2>&1

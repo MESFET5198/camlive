@@ -376,12 +376,18 @@ class TimelapseManager:
         self.last_state = {}   # cid -> 上次打印机状态
 
     def _cmd(self, cid, d, start_number=None):
+        cam = get_cam(cid) or {}
         args = ["ffmpeg", "-hide_banner", "-loglevel", "error",
                 "-rw_timeout", "15000000",
                 "-fflags", "+discardcorrupt",
                 "-live_start_index", "-1",
-                "-i", os.path.join(WEBROOT, cid + ".m3u8"),
+                "-i", (cam.get("device") if str(cam.get("device", "")).startswith(("http://", "https://"))
+                       else os.path.join(WEBROOT, cid + ".m3u8")),
                 "-vf", "fps=1/%d" % TIMELAPSE_INTERVAL]
+        if str(cam.get("device", "")).startswith(("http://", "https://")):
+            args[args.index("-live_start_index"):args.index("-live_start_index") + 2] = []
+            args.insert(args.index("-i"), "-f")
+            args.insert(args.index("-i"), "mpjpeg")
         if start_number is not None:
             args += ["-start_number", str(start_number)]
         args += ["-f", "image2", "-q:v", "2",
@@ -390,6 +396,14 @@ class TimelapseManager:
 
     def _spawn(self, cid, d, start_number):
         os.makedirs(d, exist_ok=True)
+        cam = get_cam(cid) or {}
+        device = str(cam.get("device", ""))
+        if device.startswith(("http://", "https://")):
+            snapshot_url = device.replace("action=stream", "action=snapshot")
+            return subprocess.Popen(
+                ["python3", "/app/timelapse_snapshot.py", snapshot_url, d,
+                 str(start_number), str(TIMELAPSE_INTERVAL)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         return subprocess.Popen(self._cmd(cid, d, start_number),
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -677,16 +691,19 @@ class Handler(SimpleHTTPRequestHandler):
             if not cam:
                 self._json({"error": "no such camera"}, 404)
                 return
-            try:
-                controls = list_controls(cam["device"])
-                formats = list_formats(cam["device"], cam)
-            except Exception as e:
-                self._json({"error": "device read failed: %s" % e}, 500)
-                return
+            if str(cam.get("device", "")).startswith(("http://", "https://")):
+                controls, formats = {}, []
+            else:
+                try:
+                    controls = list_controls(cam["device"])
+                    formats = list_formats(cam["device"], cam)
+                except Exception as e:
+                    self._json({"error": "device read failed: %s" % e}, 500)
+                    return
             d = self._cam_summary(cam)
             d["controls"] = controls
             d["formats"] = formats
-            d["ptz"] = get_ptz(cam["device"], controls)
+            d["ptz"] = get_ptz(cam["device"], controls) if controls else None
             self._json(d)
             return
         super().do_GET()
@@ -744,11 +761,14 @@ class Handler(SimpleHTTPRequestHandler):
         except Exception:
             self._json({"error": "bad json"}, 400)
             return
-        try:
-            controls = list_controls(cam["device"])
-        except Exception as e:
-            self._json({"error": "device read failed: %s" % e}, 500)
-            return
+        if str(cam.get("device", "")).startswith(("http://", "https://")):
+            controls = {}
+        else:
+            try:
+                controls = list_controls(cam["device"])
+            except Exception as e:
+                self._json({"error": "device read failed: %s" % e}, 500)
+                return
         if action == "mode":
             mode = req.get("mode")
             if mode not in ("h264", "mjpeg"):
