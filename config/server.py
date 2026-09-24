@@ -578,6 +578,8 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(body)
 
     def _cam_summary(self, cam):
+        online = (STREAMS.procs.get(cam["id"]) is not None and
+                  STREAMS.procs[cam["id"]].poll() is None) if cam.get("mode") == "mjpeg" else is_online(cam["id"])
         return {"id": cam["id"], "name": cam_display_name(cam),
                 "device": cam["device"],
                 "sleeping": STREAMS.sleeping.get(cam["id"], False),
@@ -588,7 +590,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "fps": int(cam.get("fps", 0)),
                 "bitrate": cam.get("bitrate", ""),
                 "stream": cam["id"] + ".m3u8",
-                "online": is_online(cam["id"]),
+                "online": online,
                 "timelapse": bool(TIMELAPSE.active.get(cam["id"])) if TIMELAPSE else False}
 
     def do_GET(self):
