@@ -596,7 +596,7 @@ class Handler(SimpleHTTPRequestHandler):
     def do_GET(self):
         if re.match(r"^/api/(cam|printer)/", self.path):
             LAST_SEEN[0] = time.time()
-        m = re.match(r"^/preview/([^/]+)/stream$", self.path)
+        m = re.match(r"^/preview/([^/]+)/stream(?:\?.*)?$", self.path)
         if m:
             cid = m.group(1)
             cam = get_cam(cid)
