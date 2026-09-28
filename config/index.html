@@ -62,36 +62,46 @@ function play(id, card) {
   var e = card.querySelector(".err");
   var src = id + ".m3u8";
   var key = "_hls_" + id;
+  var retryTimer = null, healthTimer = null, lastPos = 0, lastProgress = Date.now();
+  function restart(reason) {
+    if (retryTimer) return;
+    e.textContent = "视频恢复中...（" + reason + "）";
+    e.style.display = "block";
+    if (window[key]) { try { window[key].destroy(); } catch(x){} window[key] = null; }
+    retryTimer = setTimeout(function(){ retryTimer = null; start(); }, 1200);
+  }
   function start() {
     if (Hls.isSupported()) {
       if (window[key]) { try { window[key].destroy(); } catch(x){} }
       var hls = new Hls({liveSyncDurationCount: 3, maxBufferLength: 10, maxMaxBufferLength: 20, backBufferLength: 14, liveDurationInfinity: true, fragLoadingMaxRetry: 8, manifestLoadingMaxRetry: 8, levelLoadingMaxRetry: 8, fragLoadingTimeOut: 6000});
       window[key] = hls;
+      var parsed = false;
       hls.loadSource(src + "?t=" + Date.now());
       hls.attachMedia(v);
-      hls.on(Hls.Events.MANIFEST_PARSED, function(){ v.play().catch(function(){}); e.style.display="none"; });
+      hls.on(Hls.Events.MANIFEST_PARSED, function(){ parsed = true; v.play().catch(function(){}); e.style.display="none"; lastProgress = Date.now(); });
       hls.on(Hls.Events.ERROR, function(ev,d){
-        if (d.fatal) { e.style.display="block"; setTimeout(start, 2500); }
+        if (d.fatal) { restart("HLS错误"); }
         else { e.style.display="none"; }
       });
-      var resumeTimer = null;
+      var resumeTimer = null, loadTimer = setTimeout(function(){ if (!parsed) restart("加载超时"); }, 10000);
       v.addEventListener("pause", function(){
         if (resumeTimer || v.ended) return;
         resumeTimer = setTimeout(function(){
           resumeTimer = null;
           if (v.paused && window[key]) {
-            v.play().catch(function(){});
+            v.play().catch(function(){ restart("播放暂停"); });
           }
         }, 1500);
       });
-      var stallTimer = null;
-      var lastPos = v.currentTime, lastT = Date.now();
-      v.addEventListener("timeupdate", function(){ lastPos = v.currentTime; lastT = Date.now(); });
-      setInterval(function(){
-        if (!v.paused && Date.now() - lastT > 5000 && window[key]) {
-          // 画面 5 秒没动: 尝试恢复加载
-          try { window[key].startLoad(); } catch(x){}
-          lastT = Date.now();
+      v.addEventListener("timeupdate", function(){
+        if (v.currentTime !== lastPos) { lastPos = v.currentTime; lastProgress = Date.now(); }
+      });
+      v.addEventListener("waiting", function(){ if (parsed) restart("缓冲停滞"); });
+      v.addEventListener("stalled", function(){ if (parsed) restart("数据停滞"); });
+      clearInterval(healthTimer);
+      healthTimer = setInterval(function(){
+        if (window[key] && parsed && (v.paused || Date.now() - lastProgress > 6000)) {
+          restart(v.paused ? "播放未启动" : "画面未推进");
         }
       }, 2000);
       v.addEventListener("play", function(){
