@@ -4,5 +4,6 @@ rtspAddress: :8554
 webrtc: true
 webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
+webrtcAdditionalHosts: [192.168.31.100]
 paths:
   all_others:
