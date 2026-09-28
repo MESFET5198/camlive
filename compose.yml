@@ -23,10 +23,12 @@ services:
       - /vol2/1000/TimeLapse:/timelapse
     ports:
       - "${PORT:-8081}:8081"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       - PORT=${PORT:-8081}
-      # 主机侧 light_api.py 的地址；默认仅访问本机回环接口，不自动开灯
-      - LIGHT_API_URL=${LIGHT_API_URL:-http://127.0.0.1:8788}
+      # 主机侧 light_api.py 的地址；Linux Docker 通过 host-gateway 访问宿主机
+      - LIGHT_API_URL=${LIGHT_API_URL:-http://host.docker.internal:8788}
   mediamtx:
     image: bluenviron/mediamtx:1.15.0
     container_name: camlive-mediamtx

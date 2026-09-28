@@ -12,6 +12,7 @@
     "fps": 30,
     "bitrate": "4M",
     "printer": "http://192.168.31.107:7125",
+    "light_auto": true,
     "usb_vendor": "2e1a",
     "usb_reset": true,
     "sleep": false,

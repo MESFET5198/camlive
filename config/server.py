@@ -20,6 +20,7 @@ LOGDIR = "/app/logs"
 FMT_FIELDS = ("width", "height", "fps", "bitrate")
 STREAMS = None  # StreamManager 实例, 启动时创建
 TIMELAPSE = None  # TimelapseManager 实例, 启动时创建
+LIGHT_AUTOMATION = None  # LightAutomation 实例, 启动时创建
 
 # 延时拍摄: 每4秒抓1帧, 合成30fps视频 => 2小时(7200s)压缩为1分钟(1800帧), 即120倍速
 TIMELAPSE_ROOT = "/timelapse"
@@ -37,6 +38,29 @@ def light_request(path, method="GET", body=None, timeout=3):
         req.add_header("Content-Type", "application/json")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read() or b"{}")
+
+
+class LightAutomation:
+    """按打印机状态边沿切换补光灯，避免轮询时重复写 USB。"""
+
+    ACTIVE_STATES = ("printing", "paused")
+
+    def __init__(self):
+        self.active = False
+
+    def update(self, cid, state):
+        want_on = state in self.ACTIVE_STATES
+        if want_on == self.active:
+            return
+        try:
+            result = light_request("/api/light/power", "POST", {"on": want_on})
+            self.active = want_on
+            print("[light] %s 打印状态=%s, 自动%s灯 -> %s" % (
+                cid, state, "开" if want_on else "关", result.get("power")),
+                flush=True)
+        except Exception as e:
+            print("[light] %s 自动%s灯失败: %s" % (
+                cid, "开" if want_on else "关", e), flush=True)
 
 
 def load_cams():
@@ -569,6 +593,8 @@ class TimelapseManager:
         prev = self.last_state.get(cid)
         self.last_state[cid] = st
         cam["_tl_filename"] = fname
+        if LIGHT_AUTOMATION is not None and cam.get("light_auto"):
+            LIGHT_AUTOMATION.update(cid, st)
         if st in ("printing", "paused"):
             if prev not in ("printing", "paused"):
                 self.start(cam)
@@ -922,6 +948,7 @@ if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8081
     STREAMS = StreamManager()
     TIMELAPSE = TimelapseManager()
+    LIGHT_AUTOMATION = LightAutomation()
     LAST_SEEN = [time.time()]  # 页面心跳(任意观众)
     for cam in load_cams():
         STREAMS.start_cam(cam)
