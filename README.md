@@ -34,7 +34,25 @@
 - 打印进度叠加: 状态/百分比/层数/预计剩余时间/热床喷头温度, 每 5s 刷新
 - 摄像头掉线自愈: 重启进程 → 60s 后 USB 重置
 - PTZ/变焦控制(支持云台的相机)
+- 可选 STM32 USB HID 补光灯联动: 通过主机侧 `light_api.py` 读取状态并控制开关/亮度/RGB
 - 页面右上角 ⚙ 展开/收起设置面板(防误触)
+
+## STM32 补光灯联动
+
+`camlive` 不直接打开 HID 设备，而是代理到同一主机上的 STM32 `light_api.py`（默认
+`http://127.0.0.1:8788`）。页面只读取状态，不会在加载监控页面时自动开灯；设备不可用时显示
+`unavailable`，不会伪装成“已关闭”。
+
+部署主机侧桥接服务时，参考 STM32 固件仓库的 `MONITOR_INTEGRATION.md`，并设置专用 udev 规则
+允许服务用户访问 `1209:0001`。运行 `camlive` 时可用 `LIGHT_API_URL` 指定桥接地址；不要把未鉴权
+的 `light_api.py` 绑定到公网或直接让浏览器跨域访问。
+
+代理接口：`GET /api/light/health`、`GET /api/light/status`、`POST /api/light/power`、
+`POST /api/light/brightness`、`POST /api/light/color`。
+
+`camlive` 对全局亮度实施固定上限 75%（协议值 `191/255`）。请求更高值时会被压到 191，
+响应会同时返回 `requested_brightness`、`applied_brightness` 和 `max_brightness`。该限制是软件策略，
+不能替代实际电流、线材、接插件和温升验证。
 
 ## 常见问题
 

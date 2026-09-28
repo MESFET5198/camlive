@@ -25,6 +25,18 @@ TIMELAPSE = None  # TimelapseManager 实例, 启动时创建
 TIMELAPSE_ROOT = "/timelapse"
 TIMELAPSE_FPS = 30
 TIMELAPSE_INTERVAL = 4
+LIGHT_API_URL = os.environ.get("LIGHT_API_URL", "http://127.0.0.1:8788").rstrip("/")
+LIGHT_MAX_BRIGHTNESS = 191  # 75% of 255; enforced by camlive before forwarding
+
+
+def light_request(path, method="GET", body=None, timeout=3):
+    """访问可选的主机侧 STM32 HID REST 桥接，不直接操作 HID。"""
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(LIGHT_API_URL + path, data=data, method=method)
+    if data is not None:
+        req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
 
 
 def load_cams():
@@ -594,6 +606,18 @@ class Handler(SimpleHTTPRequestHandler):
                 "timelapse": bool(TIMELAPSE.active.get(cam["id"])) if TIMELAPSE else False}
 
     def do_GET(self):
+        if self.path == "/api/light/health":
+            try:
+                self._json(light_request("/health"))
+            except Exception as e:
+                self._json({"ok": False, "available": False, "last_error": str(e)}, 503)
+            return
+        if self.path == "/api/light/status":
+            try:
+                self._json(light_request("/api/light/status"))
+            except Exception as e:
+                self._json({"ok": False, "available": False, "last_error": str(e)}, 503)
+            return
         if re.match(r"^/api/(cam|printer)/", self.path):
             LAST_SEEN[0] = time.time()
         m = re.match(r"^/preview/([^/]+)/stream(?:\?.*)?$", self.path)
@@ -711,6 +735,26 @@ class Handler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
+        m = re.match(r"^/api/light/(power|brightness|color)$", self.path)
+        if m:
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                req = json.loads(self.rfile.read(n) or b"{}")
+                if m.group(1) == "brightness":
+                    value = req.get("value")
+                    if not isinstance(value, int) or isinstance(value, bool):
+                        self._json({"ok": False, "error": "value must be an integer"}, 400)
+                        return
+                    req["value"] = max(0, min(LIGHT_MAX_BRIGHTNESS, value))
+                result = light_request("/api/light/" + m.group(1), "POST", req)
+                if m.group(1) == "brightness":
+                    result["requested_brightness"] = value
+                    result["applied_brightness"] = req["value"]
+                    result["max_brightness"] = LIGHT_MAX_BRIGHTNESS
+                self._json(result)
+            except Exception as e:
+                self._json({"ok": False, "available": False, "error": str(e)}, 502)
+            return
         m = re.match(r"^/api/printer/([^/]+)/cmd$", self.path)
         if m:
             cam = get_cam(m.group(1))
