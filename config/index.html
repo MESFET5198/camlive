@@ -63,7 +63,7 @@ function play(id, card) {
   var src = id + ".m3u8";
   var key = "_hls_" + id;
   var retryTimer = null, healthTimer = null, generation = 0;
-  var lastFrameCount = 0, lastPresented = Date.now(), hasPlayed = false;
+  var lastFrameCount = 0, lastPresentedFrames = 0, lastPresented = Date.now(), hasPlayed = false;
   function frameCount() {
     if (typeof v.getVideoPlaybackQuality === "function") {
       return v.getVideoPlaybackQuality().totalVideoFrames || 0;
@@ -79,11 +79,16 @@ function play(id, card) {
     try { v.load(); } catch(x){}
   }
   function markPresented() {
-    lastPresented = Date.now();
     e.style.display = "none";
     if (typeof v.requestVideoFrameCallback === "function") {
-      v.requestVideoFrameCallback(function(){
-        if (!v.paused) markPresented();
+      v.requestVideoFrameCallback(function(now, meta){
+        if (v.paused) return;
+        var presented = meta && meta.presentedFrames;
+        if (presented == null || presented > lastPresentedFrames) {
+          lastPresentedFrames = presented == null ? lastPresentedFrames + 1 : presented;
+          lastPresented = Date.now();
+        }
+        markPresented();
       });
     }
   }
@@ -100,6 +105,7 @@ function play(id, card) {
     hasPlayed = false;
     lastPresented = Date.now();
     lastFrameCount = frameCount();
+    lastPresentedFrames = 0;
     if (Hls.isSupported()) {
       var hls = new Hls({liveSyncDurationCount: 3, maxBufferLength: 10, maxMaxBufferLength: 20, backBufferLength: 14, liveDurationInfinity: true, fragLoadingMaxRetry: 8, manifestLoadingMaxRetry: 8, levelLoadingMaxRetry: 8, fragLoadingTimeOut: 6000, enableWorker: true, lowLatencyMode: false});
       window[key] = hls;
