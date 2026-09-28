@@ -34,6 +34,6 @@ services:
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
     ports:
-      - "8554:8554/tcp"
+      - "18554:8554/tcp"
       - "8889:8889/tcp"
       - "8189:8189/udp"
