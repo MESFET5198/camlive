@@ -5,6 +5,7 @@
     "auto_name": true,
     "device": "/dev/video0",
     "mode": "h264",
+    "webrtc": true,
     "width": 1920,
     "height": 1080,
     "fps": 30,

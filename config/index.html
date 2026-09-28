@@ -6,7 +6,7 @@
 <style>
   html,body{margin:0;height:100%;background:#111;display:flex;flex-direction:column;align-items:center;font-family:sans-serif}
   h2{color:#ddd;font-weight:400;margin:10px}
-  video{width:100%;max-height:76vh;background:#000;border-radius:6px;display:block}
+  video,iframe{width:100%;max-height:76vh;background:#000;border-radius:6px;display:block;border:0}
   .err{display:none;color:#f66;font-size:12px;margin:6px 0}
   .cams{display:flex;gap:14px;width:98vw;justify-content:center;flex-wrap:wrap}
   .cam{position:relative;flex:1 1 46%;min-width:340px;background:#18181b;border:1px solid #333;border-radius:8px;padding:10px;box-sizing:border-box}
@@ -196,6 +196,7 @@ function buildCard(cam) {
     '<div class="vtime"></div>' +
     '<div class="err">视频加载中...（若长时间无画面请检查摄像头）</div>' +
     '<video autoplay muted playsinline controls></video>' +
+    (cam.webrtc ? '<iframe class="webrtc" allow="autoplay; fullscreen" allowfullscreen style="display:none"></iframe>' : '') +
     '<img class="preview" style="display:none;width:100%;max-height:76vh;background:#000;border-radius:6px"></img>' +
     '<div class="printer"><div class="pline"><span class="pst"></span><span class="pname"></span><span class="pp"></span><button class="pcmd pause">暂停</button><button class="pcmd resume" style="display:none">继续</button></div><div class="pbar"><i></i></div></div>';
   document.getElementById("cams").appendChild(d);
@@ -258,6 +259,14 @@ function showH264(id, card) {
   img.style.display = "none";
   img.onerror = null;
   card.querySelector("video").style.display = "block";
+}
+function showWebrtc(id, card) {
+  var v = card.querySelector("video"), frame = card.querySelector("iframe.webrtc");
+  if (!frame) return false;
+  v.style.display = "none";
+  frame.src = "http://" + location.hostname + ":8889/" + encodeURIComponent(id) + "/";
+  frame.style.display = "block";
+  return true;
 }
 function buildConfig(id, card, data) {
   if (!data.formats || !data.formats.length) return;
@@ -485,6 +494,7 @@ function init() {
         else if (card.webkitRequestFullscreen) card.webkitRequestFullscreen();
       };
       PLAYERS[cam.id] = play(cam.id, card);
+      if (cam.webrtc) showWebrtc(cam.id, card);
       fetch("api/cam/" + cam.id).then(r=>r.json()).then(function(d){
         if (d.error) return;
         buildConfig(cam.id, card, d);

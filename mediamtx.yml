@@ -1,0 +1,8 @@
+logLevel: info
+rtsp: true
+rtspAddress: :8554
+webrtc: true
+webrtcAddress: :8889
+webrtcLocalUDPAddress: :8189
+paths:
+  all_others:

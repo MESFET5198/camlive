@@ -27,3 +27,13 @@ services:
       - PORT=${PORT:-8081}
       # 主机侧 light_api.py 的地址；默认仅访问本机回环接口，不自动开灯
       - LIGHT_API_URL=${LIGHT_API_URL:-http://127.0.0.1:8788}
+  mediamtx:
+    image: bluenviron/mediamtx:1.15.0
+    container_name: camlive-mediamtx
+    restart: always
+    volumes:
+      - ./mediamtx.yml:/mediamtx.yml:ro
+    ports:
+      - "8554:8554/tcp"
+      - "8889:8889/tcp"
+      - "8189:8189/udp"

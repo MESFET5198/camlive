@@ -59,11 +59,16 @@ if [ ${#ENC[@]} -eq 0 ]; then
   fi
 fi
 
+OUT="[f=hls:hls_time=2:hls_list_size=4:hls_flags=delete_segments]/app/${ID}.m3u8"
+if [ "${WEBRTC:-0}" = "1" ]; then
+  OUT="${OUT}|[f=rtsp:rtsp_transport=tcp]rtsp://mediamtx:8554/${ID}"
+  echo "[$ID] dual output enabled: HLS + RTSP/WebRTC"
+fi
+
 exec ffmpeg -hide_banner -loglevel warning \
   -f v4l2 -input_format mjpeg -video_size "${W}x${H}" -framerate "${FPS}" -i "$DEV" \
   "${ENC[@]}" \
   -r "${FPS}" -fps_mode cfr \
   -b:v "${BITRATE}" -maxrate "${BITRATE}" -bufsize "${BUFSIZE}" \
   -g "$((FPS*2))" \
-  -f hls -hls_time 2 -hls_list_size 4 -hls_flags delete_segments \
-  /app/${ID}.m3u8
+  -map 0:v:0 -f tee "${OUT}"

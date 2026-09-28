@@ -602,6 +602,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "fps": int(cam.get("fps", 0)),
                 "bitrate": cam.get("bitrate", ""),
                 "stream": cam["id"] + ".m3u8",
+                "webrtc": bool(cam.get("webrtc", False)),
                 "online": online,
                 "timelapse": bool(TIMELAPSE.active.get(cam["id"])) if TIMELAPSE else False}
 
