@@ -68,6 +68,7 @@ fi
 exec ffmpeg -hide_banner -loglevel warning \
   -f v4l2 -input_format mjpeg -video_size "${W}x${H}" -framerate "${FPS}" -i "$DEV" \
   "${ENC[@]}" \
+  -bf 0 \
   -r "${FPS}" -fps_mode cfr \
   -b:v "${BITRATE}" -maxrate "${BITRATE}" -bufsize "${BUFSIZE}" \
   -g "$((FPS*2))" \
