@@ -62,7 +62,7 @@ function play(id, card) {
   var e = card.querySelector(".err");
   var src = id + ".m3u8";
   var key = "_hls_" + id;
-  var retryTimer = null, healthTimer = null, stallTimer = null, lastPos = 0, lastProgress = Date.now();
+  var retryTimer = null, healthTimer = null, lastPos = 0, lastProgress = Date.now(), hasPlayed = false;
   function restart(reason) {
     if (retryTimer) return;
     e.textContent = "视频恢复中...（" + reason + "）";
@@ -83,7 +83,7 @@ function play(id, card) {
         if (d.fatal) { restart("HLS错误"); }
         else { e.style.display="none"; }
       });
-      var resumeTimer = null, loadTimer = setTimeout(function(){ if (!parsed) restart("加载超时"); }, 10000);
+      var resumeTimer = null, loadTimer = setTimeout(function(){ if (!parsed) restart("加载超时"); }, 15000);
       v.addEventListener("pause", function(){
         if (resumeTimer || v.ended) return;
         resumeTimer = setTimeout(function(){
@@ -96,28 +96,18 @@ function play(id, card) {
       v.addEventListener("timeupdate", function(){
         if (v.currentTime !== lastPos) {
           lastPos = v.currentTime; lastProgress = Date.now();
-          if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
           e.style.display = "none";
         }
       });
-      function delayedStall(reason) {
-        if (!parsed || stallTimer) return;
-        stallTimer = setTimeout(function(){
-          stallTimer = null;
-          if (Date.now() - lastProgress >= 7000) restart(reason);
-        }, 8000);
-      }
-      v.addEventListener("waiting", function(){ delayedStall("缓冲持续停滞"); });
-      v.addEventListener("stalled", function(){ delayedStall("数据持续停滞"); });
       v.addEventListener("playing", function(){
+        hasPlayed = true;
         lastProgress = Date.now();
-        if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
         e.style.display = "none";
       });
       clearInterval(healthTimer);
       healthTimer = setInterval(function(){
-        if (window[key] && parsed && (v.paused || Date.now() - lastProgress > 6000)) {
-          restart(v.paused ? "播放未启动" : "画面未推进");
+        if (window[key] && parsed && hasPlayed && !v.paused && Date.now() - lastProgress > 6000) {
+          restart("画面未推进");
         }
       }, 2000);
       v.addEventListener("play", function(){
