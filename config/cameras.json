@@ -6,6 +6,7 @@
     "device": "/dev/video0",
     "mode": "h264",
     "webrtc": true,
+    "input_format": "h264",
     "width": 1920,
     "height": 1080,
     "fps": 30,

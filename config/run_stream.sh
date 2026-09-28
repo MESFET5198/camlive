@@ -66,7 +66,7 @@ if [ "${WEBRTC:-0}" = "1" ]; then
 fi
 
 exec ffmpeg -hide_banner -loglevel warning \
-  -f v4l2 -input_format mjpeg -video_size "${W}x${H}" -framerate "${FPS}" -i "$DEV" \
+  -f v4l2 -input_format "${INPUT_FORMAT}" -video_size "${W}x${H}" -framerate "${FPS}" -i "$DEV" \
   "${ENC[@]}" \
   -bf 0 \
   -r "${FPS}" -fps_mode cfr \

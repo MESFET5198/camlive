@@ -13,6 +13,7 @@ for c in cams:
         c["FPS"] = int(c.get("fps", 25))
         c["BITRATE"] = c.get("bitrate", "4M")
         c["BUFSIZE"] = c.get("bufsize", "8M")
+        c["INPUT_FORMAT"] = c.get("input_format", "mjpeg")
         for k, v in c.items():
             ku = k.upper()
             if isinstance(v, bool):
