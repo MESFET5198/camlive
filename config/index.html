@@ -62,61 +62,89 @@ function play(id, card) {
   var e = card.querySelector(".err");
   var src = id + ".m3u8";
   var key = "_hls_" + id;
-  var retryTimer = null, healthTimer = null, lastPos = 0, lastProgress = Date.now(), hasPlayed = false;
+  var retryTimer = null, healthTimer = null, generation = 0;
+  var lastFrameCount = 0, lastPresented = Date.now(), hasPlayed = false;
+  function frameCount() {
+    if (typeof v.getVideoPlaybackQuality === "function") {
+      return v.getVideoPlaybackQuality().totalVideoFrames || 0;
+    }
+    return v.webkitDecodedFrameCount || 0;
+  }
+  function stopInstance() {
+    generation++;
+    if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
+    if (window[key]) { try { window[key].destroy(); } catch(x){} window[key] = null; }
+    try { v.pause(); } catch(x){}
+    v.removeAttribute("src");
+    try { v.load(); } catch(x){}
+  }
+  function markPresented() {
+    lastPresented = Date.now();
+    e.style.display = "none";
+    if (typeof v.requestVideoFrameCallback === "function") {
+      v.requestVideoFrameCallback(function(){
+        if (!v.paused) markPresented();
+      });
+    }
+  }
   function restart(reason) {
     if (retryTimer) return;
     e.textContent = "视频恢复中...（" + reason + "）";
     e.style.display = "block";
-    if (window[key]) { try { window[key].destroy(); } catch(x){} window[key] = null; }
+    stopInstance();
     retryTimer = setTimeout(function(){ retryTimer = null; start(); }, 1200);
   }
   function start() {
+    stopInstance();
+    var run = ++generation;
+    hasPlayed = false;
+    lastPresented = Date.now();
+    lastFrameCount = frameCount();
     if (Hls.isSupported()) {
-      if (window[key]) { try { window[key].destroy(); } catch(x){} }
-      var hls = new Hls({liveSyncDurationCount: 3, maxBufferLength: 10, maxMaxBufferLength: 20, backBufferLength: 14, liveDurationInfinity: true, fragLoadingMaxRetry: 8, manifestLoadingMaxRetry: 8, levelLoadingMaxRetry: 8, fragLoadingTimeOut: 6000});
+      var hls = new Hls({liveSyncDurationCount: 3, maxBufferLength: 10, maxMaxBufferLength: 20, backBufferLength: 14, liveDurationInfinity: true, fragLoadingMaxRetry: 8, manifestLoadingMaxRetry: 8, levelLoadingMaxRetry: 8, fragLoadingTimeOut: 6000, enableWorker: true, lowLatencyMode: false});
       window[key] = hls;
       var parsed = false;
-      hls.loadSource(src + "?t=" + Date.now());
+      hls.loadSource(src + "?client=" + Date.now());
       hls.attachMedia(v);
-      hls.on(Hls.Events.MANIFEST_PARSED, function(){ parsed = true; v.play().catch(function(){}); e.style.display="none"; lastProgress = Date.now(); });
+      hls.on(Hls.Events.MANIFEST_PARSED, function(){
+        if (run !== generation) return;
+        parsed = true; v.play().catch(function(){}); e.style.display="none";
+      });
       hls.on(Hls.Events.ERROR, function(ev,d){
+        if (run !== generation) return;
         if (d.fatal) { restart("HLS错误"); }
         else { e.style.display="none"; }
       });
-      var resumeTimer = null, loadTimer = setTimeout(function(){ if (!parsed) restart("加载超时"); }, 15000);
+      setTimeout(function(){ if (run === generation && !parsed) restart("加载超时"); }, 15000);
       v.addEventListener("pause", function(){
-        if (resumeTimer || v.ended) return;
-        resumeTimer = setTimeout(function(){
-          resumeTimer = null;
-          if (v.paused && window[key]) {
-            v.play().catch(function(){ restart("播放暂停"); });
-          }
-        }, 1500);
-      });
-      v.addEventListener("timeupdate", function(){
-        if (v.currentTime !== lastPos) {
-          lastPos = v.currentTime; lastProgress = Date.now();
-          e.style.display = "none";
-        }
+        if (run !== generation || v.ended) return;
+        setTimeout(function(){
+          if (run === generation && v.paused && !document.hidden) v.play().catch(function(){ restart("播放暂停"); });
+        }, 500);
       });
       v.addEventListener("playing", function(){
+        if (run !== generation) return;
         hasPlayed = true;
-        lastProgress = Date.now();
+        lastPresented = Date.now();
         e.style.display = "none";
       });
-      clearInterval(healthTimer);
+      v.addEventListener("loadeddata", function(){ if (run === generation) markPresented(); });
       healthTimer = setInterval(function(){
-        if (window[key] && parsed && hasPlayed && !v.paused && Date.now() - lastProgress > 6000) {
-          restart("画面未推进");
+        if (run !== generation || !window[key] || !parsed || !hasPlayed || v.paused) return;
+        var currentFrames = frameCount();
+        if (currentFrames > lastFrameCount) {
+          lastFrameCount = currentFrames;
+          lastPresented = Date.now();
+        }
+        if (Date.now() - lastPresented > 6000) {
+          restart("解码帧停止");
         }
       }, 2000);
-      v.addEventListener("play", function(){
-        if (resumeTimer) { clearTimeout(resumeTimer); resumeTimer = null; }
-      });
+      if (typeof v.requestVideoFrameCallback === "function") markPresented();
     } else if (v.canPlayType("application/vnd.apple.mpegurl")) { v.src = src; }
   }
   start();
-  return {start: start, card: card};
+  return {start: start, card: card, stop: stopInstance};
 }
 function post(url, body) {
   return fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
