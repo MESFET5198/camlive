@@ -54,6 +54,9 @@
 响应会同时返回 `requested_brightness`、`applied_brightness` 和 `max_brightness`。该限制是软件策略，
 不能替代实际电流、线材、接插件和温升验证。
 
+若摄像头没有暴露硬件白平衡控制，可在摄像头配置中使用 `colorbalance` 让 ffmpeg 做软件颜色平衡。
+当前 Insta360 使用轻微的红/蓝补偿和绿色压低作为实验性校正；它只影响视频流，不改变摄像头固件设置。
+
 ## 常见问题
 
 - 画质差/卡: 调低分辨率或码率; 用 MJPEG 模式看延迟

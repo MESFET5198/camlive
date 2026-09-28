@@ -29,6 +29,10 @@ done
 
 # 临时锐化(失焦视觉补救): cameras.json 里 sharpen=true 时启用
 VF=""
+if [ -n "${COLORBALANCE:-}" ]; then
+  echo "[$ID] colorbalance enabled: ${COLORBALANCE}"
+  VF="colorbalance=${COLORBALANCE},"
+fi
 if [ "${SHARPEN:-0}" = "1" ]; then
   echo "[$ID] sharpen enabled"
   VF="unsharp=5:5:0.8:5:5:0.0,"
@@ -45,9 +49,13 @@ fi
 if [ ${#ENC[@]} -eq 0 ]; then
   echo "[$ID] VAAPI unavailable, fallback to x264"
   if [ "${SHARPEN:-0}" = "1" ]; then
-    ENC=(-c:v libx264 -preset veryfast -tune zerolatency -vf "unsharp=5:5:0.8:5:5:0.0")
+    ENC=(-c:v libx264 -preset veryfast -tune zerolatency -vf "${VF}unsharp=5:5:0.8:5:5:0.0")
   else
-    ENC=(-c:v libx264 -preset veryfast -tune zerolatency)
+    if [ -n "${VF}" ]; then
+      ENC=(-c:v libx264 -preset veryfast -tune zerolatency -vf "${VF%,}")
+    else
+      ENC=(-c:v libx264 -preset veryfast -tune zerolatency)
+    fi
   fi
 fi
 
