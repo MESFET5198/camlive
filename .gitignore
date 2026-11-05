@@ -16,3 +16,6 @@ __pycache__/
 *.bak
 *.bak.*
 .DS_Store
+
+# Local secrets
+.env

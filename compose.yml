@@ -2,7 +2,8 @@
 #   1. mkdir -p config (可空, 首次启动自动填充默认配置)
 #   2. 按你的机器修改 devices 段(摄像头设备节点, 数量可能不同)
 #   3. 编辑 config/cameras.json (相机名称/设备路径/打印机地址)
-#   4. docker compose up -d
+#   4. cp .env.example .env 并填写 HOST_IP(WebRTC 用)、可选访问密码
+#   5. docker compose up -d
 services:
   camlive:
     image: camlive:generic
@@ -29,12 +30,21 @@ services:
       - PORT=${PORT:-8081}
       # 主机侧 light_api.py 的地址；Linux Docker 通过 host-gateway 访问宿主机
       - LIGHT_API_URL=${LIGHT_API_URL:-http://host.docker.internal:8788}
+      # 访问密码: 在 .env 里设置 CAMLIVE_PASSWORD 即启用 HTTP Basic 认证(用户名默认 admin)
+      - CAMLIVE_USER=${CAMLIVE_USER:-admin}
+      - CAMLIVE_PASSWORD=${CAMLIVE_PASSWORD:-}
+      # WebRTC 播放页地址模板, 见 .env.example
+      - WEBRTC_URL=${WEBRTC_URL:-http://{host}:8889/{id}/}
+      - MEDIAMTX_RTSP=rtsp://mediamtx:8554
   mediamtx:
     image: bluenviron/mediamtx:1.15.0
     container_name: camlive-mediamtx
     restart: always
     volumes:
       - ./mediamtx.yml:/mediamtx.yml:ro
+    environment:
+      # 浏览器连接 WebRTC 用的局域网 IP, 在 .env 里设置 HOST_IP
+      - MTX_WEBRTCADDITIONALHOSTS=${HOST_IP:-192.168.31.100}
     ports:
       - "18554:8554/tcp"
       - "8889:8889/tcp"

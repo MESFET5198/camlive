@@ -108,6 +108,13 @@ body.solo .cam.focus .stage{aspect-ratio:auto;height:calc(100vh - 230px);min-hei
 .p-pct{font:600 15px var(--mono)}
 .bar{height:6px;background:var(--panel2);border-radius:6px;overflow:hidden}
 .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .6s}
+.p-eta{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:8px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line)}
+.p-eta .k{font-size:12px;color:var(--dim)}
+.p-eta .v{font:600 20px var(--mono);color:var(--text)}
+.p-eta .d{font-size:12px;color:var(--dim)}
+.p-eta .src{margin-left:auto;font-size:11px;color:var(--mute)}
+.p-eta.done .v{color:#22d3ee}
+.p-eta.paused .v{color:#fbbf24}
 .p-stats{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--dim)}
 .p-stats b{color:var(--text);font:500 12px var(--mono)}
 .p-btns{display:flex;gap:6px;margin-left:auto}
@@ -204,6 +211,7 @@ body.solo .cam.focus .stage{aspect-ratio:auto;height:calc(100vh - 230px);min-hei
         <span class="p-pct"></span>
       </div>
       <div class="bar"><i></i></div>
+      <div class="p-eta" hidden><span class="k"></span><span class="v"></span><span class="d"></span><span class="src"></span></div>
       <div class="p-top">
         <div class="p-stats"></div>
         <div class="p-btns">
@@ -220,7 +228,7 @@ body.solo .cam.focus .stage{aspect-ratio:auto;height:calc(100vh - 230px);min-hei
   </article>
 </template>
 
-<script src="hls.js"></script>
+<script src="vendor/hls.min.js"></script>
 <script>
 "use strict";
 /* ============================================================
@@ -264,23 +272,37 @@ function fmtDur(sec) {
   var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60);
   return h ? h + "h" + (m < 10 ? "0" : "") + m + "m" : m + "m";
 }
-function fmtClock(ts) {
-  var d = new Date(ts * 1000), now = new Date();
-  var hm = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
-  return d.toDateString() === now.toDateString() ? hm : (d.getMonth() + 1) + "/" + d.getDate() + " " + hm;
+function fmtHM(ts) {
+  var d = new Date(ts * 1000);
+  return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
 }
+/* 相对日期: 今天 / 明天 / 昨天 / 11月7日 */
+function fmtDay(ts) {
+  var d = new Date(ts * 1000), t = new Date();
+  t.setHours(0, 0, 0, 0);
+  var diff = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - t) / 86400000);
+  return {"-1": "昨天", "0": "今天", "1": "明天", "2": "后天"}[diff] || (d.getMonth() + 1) + "月" + d.getDate() + "日";
+}
+function fmtClock(ts) { return fmtDay(ts) + " " + fmtHM(ts); }
+var ETA_SRC = {mixed: "依据: 切片预估 + 实际进度", file: "依据: 实际进度外推", slicer: "依据: 切片软件预估", klipper: "依据: Klipper 估算"};
 function fmtT(v) { return v == null ? "-" : Math.round(v); }
 function debounce(fn, ms) {
   var t; return function () { var a = arguments, s = this; clearTimeout(t); t = setTimeout(function () { fn.apply(s, a); }, ms); };
 }
 /* 本地没有 hls.js 时回退到 CDN */
-function ensureHls() {
-  if (window.Hls) return Promise.resolve();
+/* hls.js: 仓库内置 vendor/hls.min.js -> 旧版 /hls.js -> CDN */
+function loadScript(src) {
   return new Promise(function (ok) {
     var s = document.createElement("script");
-    s.src = "https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js";
+    s.src = src;
     s.onload = s.onerror = function () { ok(); };
     document.head.appendChild(s);
+  });
+}
+function ensureHls() {
+  if (window.Hls) return Promise.resolve();
+  return loadScript("hls.js").then(function () {
+    if (!window.Hls) return loadScript("https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js");
   });
 }
 
@@ -477,8 +499,11 @@ Camera.prototype.applyView = function (force) {
       if (self.img.naturalWidth) { self.hideMsg(); clearInterval(self._imgPoll); }
     }, 500);
   }
-  else this.frame.src = "http://" + location.hostname + ":8889/" + encodeURIComponent(this.id) +
-    "/?controls=false&muted=true&autoplay=true&playsinline=true";
+  else {
+    var u = (App.info.webrtc_url || "http://{host}:8889/{id}/")
+      .replace("{host}", location.hostname).replace("{id}", encodeURIComponent(this.id));
+    this.frame.src = u + (u.indexOf("?") < 0 ? "?" : "&") + "controls=false&muted=true&autoplay=true&playsinline=true";
+  }
 };
 Camera.prototype.onPlayer = function (st, why) {
   if (this.view !== "hls") return;
@@ -534,7 +559,7 @@ Camera.prototype.refreshPrinter = function () {
     pill.className = "pill " + st;
     self.q(".p-file").textContent = d.filename || (active ? "" : "—");
     self.q(".p-file").title = d.filename || "";
-    var pct = d.progress != null ? d.progress * 100 : null;
+    var pct = st === "complete" ? 100 : d.progress != null ? d.progress * 100 : null;
     self.q(".p-pct").textContent = pct != null && (active || st === "complete") ? pct.toFixed(1) + "%" : "";
     self.q(".bar i").style.width = (pct || 0) + "%";
     self.q(".bar").hidden = !active && st !== "complete";
@@ -542,8 +567,25 @@ Camera.prototype.refreshPrinter = function () {
     var stats = [];
     if (d.total_layer) stats.push("层 <b>" + (d.layer || 0) + "/" + d.total_layer + "</b>");
     if (active && d.print_duration) stats.push("已用 <b>" + fmtDur(d.print_duration) + "</b>");
-    var remain = d.eta ? d.eta - Date.now() / 1000 : null;
-    if (active && remain != null) stats.push("剩余 <b>" + fmtDur(remain) + "</b>", "预计 <b>" + fmtClock(d.eta) + "</b>");
+    if (active && d.slicer_total) stats.push("切片预估 <b>" + fmtDur(d.slicer_total) + "</b>");
+    /* 用服务器算出的剩余秒数 + 浏览器本地时钟, 避免两边时钟不一致 */
+    var remain = active && d.remaining != null ? d.remaining : null;
+    var eta = remain != null ? Date.now() / 1000 + remain : null;
+    var box = self.q(".p-eta");
+    box.className = "p-eta" + (st === "paused" ? " paused" : "") + (st === "complete" ? " done" : "");
+    box.hidden = false;
+    if (st === "printing" && eta) {
+      self.setEta("预计完成", fmtHM(eta), fmtDay(eta) + " · 还剩 " + fmtDur(remain), ETA_SRC[d.eta_source]);
+    } else if (st === "paused" && remain != null) {
+      self.setEta("已暂停", "还需 " + fmtDur(remain), "现在继续约 " + fmtClock(eta) + " 完成", ETA_SRC[d.eta_source]);
+    } else if (active) {
+      self.setEta("预计完成", "计算中…", "进度数据不足", "");
+    } else if (d.finished_at && (st === "complete" || st === "cancelled" || st === "error")) {
+      self.setEta(st === "complete" ? "完成于" : st === "error" ? "出错于" : "取消于", fmtHM(d.finished_at),
+        fmtDay(d.finished_at) + (d.finished_duration ? " · 用时 " + fmtDur(d.finished_duration) : ""), "");
+    } else {
+      box.hidden = true;
+    }
     if (d.ext_temp != null) stats.push("喷头 <b>" + fmtT(d.ext_temp) + "/" + fmtT(d.ext_target) + "°</b>");
     if (d.bed_temp != null) stats.push("热床 <b>" + fmtT(d.bed_temp) + "/" + fmtT(d.bed_target) + "°</b>");
     self.q(".p-stats").innerHTML = stats.map(function (s) { return "<span>" + s + "</span>"; }).join("");
@@ -558,7 +600,8 @@ Camera.prototype.refreshPrinter = function () {
     if (active) {
       self.q(".hud-l").textContent = (PSTATE[st] || st) + (pct != null ? " " + pct.toFixed(0) + "%" : "") +
         (d.total_layer ? " · " + (d.layer || 0) + "/" + d.total_layer : "");
-      self.q(".hud-r").textContent = remain != null ? "剩 " + fmtDur(remain) : "";
+      self.q(".hud-r").textContent = eta && st === "printing" ? fmtHM(eta) + " 完成 · 剩 " + fmtDur(remain)
+        : remain != null ? "暂停 · 还需 " + fmtDur(remain) : "";
       self.q(".hud-r").hidden = remain == null;
       prog.querySelector("i").style.width = (pct || 0) + "%";
     }
@@ -566,6 +609,10 @@ Camera.prototype.refreshPrinter = function () {
     sec.hidden = true;
     self.q(".ov.hud").hidden = self.q(".ov.prog").hidden = true;
   });
+};
+Camera.prototype.setEta = function (k, v, d, src) {
+  var b = this.q(".p-eta");
+  $(".k", b).textContent = k; $(".v", b).textContent = v; $(".d", b).textContent = d; $(".src", b).textContent = src || "";
 };
 Camera.prototype.printerCmd = function (cmd, okMsg) {
   var self = this;
@@ -836,6 +883,7 @@ var Light = {
  * 应用
  * ============================================================ */
 var App = {
+  info: {},
   init: function () {
     var self = this;
     if (store("cols") === "1") document.body.classList.add("cols1");
@@ -855,7 +903,8 @@ var App = {
       $("#clock").textContent = d.toLocaleTimeString("zh-CN", {hour12: false});
     }, 1000);
 
-    ensureHls().then(function () { return api("api/cams"); }).then(function (cams) {
+    Promise.all([ensureHls(), api("api/info").then(function (i) { self.info = i; }).catch(function () {})])
+      .then(function () { return api("api/cams"); }).then(function (cams) {
       $("#camCount").textContent = cams.length + " 路";
       if (!cams.length) {
         $("#grid").appendChild(el("div", {class: "empty"}, "没有配置摄像头，请编辑 cameras.json"));

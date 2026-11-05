@@ -1,0 +1,11 @@
+.git
+**/__pycache__
+**/*.pyc
+config/logs
+config/*.m3u8
+config/*.ts
+config/*.tmp
+config/hls.js
+TimeLapse
+timelapse
+tools
