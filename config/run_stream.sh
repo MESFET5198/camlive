@@ -35,7 +35,7 @@ if [ -n "${COLORBALANCE:-}" ]; then
 fi
 if [ "${SHARPEN:-0}" = "1" ]; then
   echo "[$ID] sharpen enabled"
-  VF="unsharp=5:5:0.8:5:5:0.0,"
+  VF="${VF}unsharp=5:5:0.8:5:5:0.0,"
 fi
 
 # 优先 Intel VAAPI 硬编(需要 /dev/dri 透传 + iHD 驱动)，失败自动回退 x264 软编
@@ -48,15 +48,8 @@ if [ -e /dev/dri/renderD128 ]; then
 fi
 if [ ${#ENC[@]} -eq 0 ]; then
   echo "[$ID] VAAPI unavailable, fallback to x264"
-  if [ "${SHARPEN:-0}" = "1" ]; then
-    ENC=(-c:v libx264 -preset veryfast -tune zerolatency -vf "${VF}unsharp=5:5:0.8:5:5:0.0")
-  else
-    if [ -n "${VF}" ]; then
-      ENC=(-c:v libx264 -preset veryfast -tune zerolatency -vf "${VF%,}")
-    else
-      ENC=(-c:v libx264 -preset veryfast -tune zerolatency)
-    fi
-  fi
+  ENC=(-c:v libx264 -preset veryfast -tune zerolatency)
+  [ -n "${VF}" ] && ENC+=(-vf "${VF%,}")
 fi
 
 OUT="[f=hls:hls_time=2:hls_list_size=4:hls_flags=delete_segments]/app/${ID}.m3u8"

@@ -74,15 +74,44 @@ def load_cams():
         return []
 
 
+CAMS_LOCK = threading.Lock()
+
+
 def save_cams(cams):
-    with open(CAMS_FILE, "w") as f:
-        json.dump(cams, f, ensure_ascii=False, indent=2)
+    """原子写入: 先写临时文件再 rename, 避免并发请求/断电写出半个 JSON"""
+    with CAMS_LOCK:
+        tmp = CAMS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(cams, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, CAMS_FILE)
+
+
+def update_cam(cid, **fields):
+    with CAMS_LOCK:
+        cams = load_cams()
+    for c in cams:
+        if c.get("id") == cid:
+            c.update(fields)
+    save_cams(cams)
+
+
+_NAME_CACHE = {}  # device -> (expire_ts, name)
 
 
 def cam_display_name(cam):
-    """auto_name 开启时, 名称跟随实际设备(Card type); 失败回退配置名"""
+    """auto_name 开启时, 名称跟随实际设备(Card type); 失败回退配置名。
+    结果缓存 60s, 避免每次状态轮询都 fork v4l2-ctl。"""
     if not cam.get("auto_name"):
         return cam.get("name", cam["id"])
+    hit = _NAME_CACHE.get(cam.get("device"))
+    if hit and hit[0] > time.time():
+        return hit[1]
+    name = _probe_display_name(cam)
+    _NAME_CACHE[cam.get("device")] = (time.time() + 60, name)
+    return name
+
+
+def _probe_display_name(cam):
     try:
         out = subprocess.run(["v4l2-ctl", "-d", cam["device"], "--info"],
                              capture_output=True, text=True, timeout=10).stdout or ""
@@ -464,7 +493,8 @@ class TimelapseManager:
             print("[timelapse] %s 启动抓帧失败: %s" % (cid, e), flush=True)
             return
         self.active[cid] = {"proc": p, "dir": d, "started": started,
-                            "filename": cam.get("_tl_filename", "")}
+                            "filename": cam.get("_tl_filename", ""),
+                            "spawned": time.time()}
         print("[timelapse] %s 打印机开始打印, 开始延时拍摄 -> %s" % (cid, d), flush=True)
 
     def resume(self, cam):
@@ -474,7 +504,7 @@ class TimelapseManager:
             return True
         base = os.path.join(TIMELAPSE_ROOT, cid)
         try:
-            subs = sorted(glob.glob(os.path.join(base, "2026*")), reverse=True)
+            subs = sorted(glob.glob(os.path.join(base, "[0-9]" * 8 + "_" + "[0-9]" * 6)), reverse=True)
         except Exception:
             subs = []
         for d in subs:
@@ -491,7 +521,8 @@ class TimelapseManager:
                 print("[timelapse] %s 续拍失败: %s" % (cid, e), flush=True)
                 return False
             self.active[cid] = {"proc": p, "dir": d, "started": started,
-                                "filename": cam.get("_tl_filename", "")}
+                                "filename": cam.get("_tl_filename", ""),
+                            "spawned": time.time()}
             print("[timelapse] %s 恢复续拍 %s (已有%d帧, 从%d继续)" % (cid, d, n, n + 1), flush=True)
             return True
         return False
@@ -561,6 +592,9 @@ class TimelapseManager:
                 newest = max((os.path.getmtime(x) for x in frames), default=0)
                 if newest and time.time() - newest < 20:
                     continue
+                # 刚启动/重启的进程还没来得及出第一帧(HLS 打开需要几秒), 不要立刻杀掉
+                if time.time() - a.get("spawned", 0) < 30:
+                    continue
                 try:
                     a["proc"].terminate()
                     a["proc"].wait(3)
@@ -576,6 +610,7 @@ class TimelapseManager:
                 print("[timelapse] %s 重启抓帧失败: %s" % (cid, e), flush=True)
                 continue
             a["proc"] = p
+            a["spawned"] = time.time()
             print("[timelapse] %s 抓帧进程异常退出, 从帧 %d 重新开始" % (cid, n), flush=True)
 
     def check(self, cam):
@@ -629,23 +664,25 @@ class Handler(SimpleHTTPRequestHandler):
                 "bitrate": cam.get("bitrate", ""),
                 "stream": cam["id"] + ".m3u8",
                 "webrtc": bool(cam.get("webrtc", False)),
+                "printer": bool(cam.get("printer")),
                 "online": online,
                 "timelapse": bool(TIMELAPSE.active.get(cam["id"])) if TIMELAPSE else False}
 
     def do_GET(self):
-        if self.path == "/api/light/health":
+        path = urllib.parse.urlsplit(self.path).path
+        if path == "/api/light/health":
             try:
                 self._json(light_request("/health"))
             except Exception as e:
                 self._json({"ok": False, "available": False, "last_error": str(e)}, 503)
             return
-        if self.path == "/api/light/status":
+        if path == "/api/light/status":
             try:
                 self._json(light_request("/api/light/status"))
             except Exception as e:
                 self._json({"ok": False, "available": False, "last_error": str(e)}, 503)
             return
-        if re.match(r"^/api/(cam|printer)/", self.path):
+        if path == "/api/cams" or re.match(r"^/api/(cam|printer)/", path):
             LAST_SEEN[0] = time.time()
         m = re.match(r"^/preview/([^/]+)/stream(?:\?.*)?$", self.path)
         if m:
@@ -678,7 +715,7 @@ class Handler(SimpleHTTPRequestHandler):
             finally:
                 s.close()
             return
-        m = re.match(r"^/api/printer/([^/]+)$", self.path)
+        m = re.match(r"^/api/printer/([^/]+)$", path)
         if m:
             cam = get_cam(m.group(1))
             if not cam or not cam.get("printer"):
@@ -731,14 +768,17 @@ class Handler(SimpleHTTPRequestHandler):
                     "eta": int(eta) if eta else None,
                     "ext_temp": ext.get("temperature"),
                     "ext_target": ext.get("target"),
+                    "bed_temp": bed.get("temperature"),
+                    "bed_target": bed.get("target"),
+                    "print_duration": int(pd) if pd else None,
                 })
             except Exception as e:
                 self._json({"error": "printer unreachable: %s" % e}, 502)
             return
-        if self.path == "/api/cams":
+        if path == "/api/cams":
             self._json([self._cam_summary(c) for c in load_cams()])
             return
-        m = re.match(r"^/api/cam/([^/]+)$", self.path)
+        m = re.match(r"^/api/cam/([^/]+)$", path)
         if m:
             cam = get_cam(m.group(1))
             if not cam:
@@ -813,11 +853,16 @@ class Handler(SimpleHTTPRequestHandler):
             if not cam:
                 self._json({"error": "no such camera"}, 404)
                 return
+            was_sleeping = STREAMS.sleeping.get(cam["id"], False)
             STREAMS.sleeping[cam["id"]] = False
             STREAMS.sleep_reason.pop(cam["id"], None)
             LAST_SEEN[0] = time.time()
-            STREAMS.start_cam(cam)
-            self._json({"ok": True})
+            p = STREAMS.procs.get(cam["id"])
+            # 仅在休眠或进程不在时才(重)启动; 否则每打开一次页面就会把所有流重启一遍
+            restarted = was_sleeping or p is None or p.poll() is not None
+            if restarted:
+                STREAMS.start_cam(cam)
+            self._json({"ok": True, "restarted": restarted})
             return
         m = re.match(r"^/api/cam/([^/]+)/(config|ptz|control|mode)$", self.path)
         if not m:
@@ -847,11 +892,7 @@ class Handler(SimpleHTTPRequestHandler):
             if mode not in ("h264", "mjpeg"):
                 self._json({"error": "mode must be h264 or mjpeg"}, 400)
                 return
-            cams = load_cams()
-            for c in cams:
-                if c["id"] == cid:
-                    c["mode"] = mode
-            save_cams(cams)
+            update_cam(cid, mode=mode)
             STREAMS.start_cam(get_cam(cid))
             self._json({"ok": True, "mode": mode})
             return
@@ -922,21 +963,20 @@ class Handler(SimpleHTTPRequestHandler):
             self._json({"error": "unsupported resolution/fps", "choices": formats}, 400)
             return
         try:
-            br = int(str(bitrate).replace("M", "").replace("K", ""))
-            br_unit = "K" if "K" in str(bitrate) else "M"
-            if br < 1 or br > 16:
+            m2 = re.fullmatch(r"(\d+)([KM])", str(bitrate).strip().upper())
+            br, br_unit = int(m2.group(1)), m2.group(2)
+            if not ((br_unit == "M" and 1 <= br <= 16) or
+                    (br_unit == "K" and 100 <= br <= 16000)):
                 raise ValueError
             bitrate = "%d%s" % (br, br_unit)
         except Exception:
             self._json({"error": "bitrate must be e.g. 2M or 1500K"}, 400)
             return
-        cams = load_cams()
-        for c in cams:
-            if c["id"] == cid:
-                c["width"], c["height"], c["fps"], c["bitrate"] = w, h, fps, bitrate
-        save_cams(cams)
+        update_cam(cid, width=w, height=h, fps=fps, bitrate=bitrate)
         try:
             confirmed = switch_config(cam, w, h, fps)
+            # switch_config 会停流并从 procs 移除, watchdog 不会再管它, 必须显式重启
+            STREAMS.start_cam(get_cam(cid))
         except Exception as e:
             self._json({"error": "restart failed: %s" % e}, 500)
             return
