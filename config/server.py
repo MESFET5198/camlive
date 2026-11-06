@@ -94,6 +94,50 @@ def http_json(url, method="GET", timeout=4):
         return json.loads(r.read() or b"{}")
 
 
+_ARCO_LIGHT_CACHE = {}  # printer URL -> {ts, on}; gcode_store 查询短缓存
+_ARCO_LIGHT_LOCK = threading.Lock()
+
+
+def phrozen_arco_light_status(url, max_age=2):
+    """从 Moonraker 命令历史推断 ARCO 舱灯状态。
+
+    原厂固件不把舱灯暴露为 Klipper 对象；触摸屏使用 P0 LED_State，
+    外部控制使用 P0 LED_SetState。历史中没有记录时明确返回未知。
+    """
+    now = time.time()
+    with _ARCO_LIGHT_LOCK:
+        hit = _ARCO_LIGHT_CACHE.get(url)
+    if hit and now - hit["ts"] <= max_age:
+        return hit["on"]
+    data = http_json(url + "/server/gcode_store?count=100", timeout=4)
+    items = data.get("result", {}).get("gcode_store", [])
+    on = None
+    for item in reversed(items):
+        if item.get("type") != "command":
+            continue
+        m = re.fullmatch(r"\s*P0\s+LED_(?:Set)?State\s*=\s*([01])\s*",
+                         str(item.get("message", "")), re.IGNORECASE)
+        if m:
+            on = m.group(1) == "1"
+            break
+    with _ARCO_LIGHT_LOCK:
+        _ARCO_LIGHT_CACHE[url] = {"ts": now, "on": on}
+    return on
+
+
+def set_phrozen_arco_light(url, on):
+    """使用 ARCO 原厂显示程序支持的 P0 指令切换舱内灯。"""
+    script = "P0 LED_SetState=%d" % (1 if on else 0)
+    body = json.dumps({"script": script}).encode()
+    req = urllib.request.Request(url + "/printer/gcode/script", data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=5) as r:
+        result = json.loads(r.read() or b"{}")
+    with _ARCO_LIGHT_LOCK:
+        _ARCO_LIGHT_CACHE[url] = {"ts": time.time(), "on": bool(on)}
+    return result
+
+
 class PrinterMonitor:
     """每台打印机(Moonraker 地址)一个轮询线程, 结果缓存供 API/延时摄影/休眠/补光灯共用。
     以前每个功能、每个浏览器标签各自去查 Moonraker, 现在统一 3s 一次。"""
@@ -906,6 +950,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "stream": cam["id"] + ".m3u8",
                 "webrtc": bool(cam.get("webrtc", False)),
                 "printer": bool(cam.get("printer")),
+                "printer_light": cam.get("printer_light"),
                 "online": online,
                 "timelapse": bool(TIMELAPSE.active.get(cam["id"])) if TIMELAPSE else False}
 
@@ -995,6 +1040,22 @@ class Handler(SimpleHTTPRequestHandler):
             else:
                 self._json({"error": "printer unreachable: %s" % PRINTERS.error(cam["printer"])}, 502)
             return
+        m = re.match(r"^/api/printer/([^/]+)/light$", path)
+        if m:
+            cam = get_cam(m.group(1))
+            if not cam or not cam.get("printer"):
+                self._json({"error": "no printer configured"}, 404)
+                return
+            if cam.get("printer_light") != "phrozen_arco":
+                self._json({"error": "printer light not configured"}, 404)
+                return
+            try:
+                on = phrozen_arco_light_status(cam["printer"])
+                self._json({"ok": True, "available": True, "on": on,
+                            "known": on is not None, "kind": "phrozen_arco"})
+            except Exception as e:
+                self._json({"error": "printer light status failed: %s" % e}, 502)
+            return
         if path == "/api/cams":
             self._json([self._cam_summary(c) for c in load_cams()])
             return
@@ -1068,6 +1129,31 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json({"ok": True})
             except Exception as e:
                 self._json({"error": "printer cmd failed: %s" % e}, 502)
+            return
+        m = re.match(r"^/api/printer/([^/]+)/light$", self.path)
+        if m:
+            cam = get_cam(m.group(1))
+            if not cam or not cam.get("printer"):
+                self._json({"error": "no printer configured"}, 404)
+                return
+            if cam.get("printer_light") != "phrozen_arco":
+                self._json({"error": "printer light not configured"}, 404)
+                return
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                req = json.loads(self.rfile.read(n) or b"{}")
+            except Exception:
+                self._json({"error": "bad json"}, 400)
+                return
+            on = req.get("on")
+            if type(on) is not bool:
+                self._json({"error": "on must be a boolean"}, 400)
+                return
+            try:
+                set_phrozen_arco_light(cam["printer"], on)
+                self._json({"ok": True, "on": on, "kind": "phrozen_arco"})
+            except Exception as e:
+                self._json({"error": "printer light command failed: %s" % e}, 502)
             return
         m = re.match(r"^/api/cam/([^/]+)/wake$", self.path)
         if m:

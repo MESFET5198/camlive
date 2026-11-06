@@ -215,6 +215,7 @@ body.solo .cam.focus .stage{aspect-ratio:auto;height:calc(100vh - 230px);min-hei
       <div class="p-top">
         <div class="p-stats"></div>
         <div class="p-btns">
+          <button class="btn b-plight" hidden>💡 舱灯</button>
           <button class="btn warn b-pause" hidden>⏸ 暂停</button>
           <button class="btn pri b-resume" hidden>▶ 继续</button>
           <button class="btn danger b-cancel" hidden>✕ 取消</button>
@@ -437,6 +438,7 @@ function Camera(info) {
   this.frame.onload = function () { if (self.view === "webrtc") self.hideMsg(); };
 
   /* 打印机按钮 */
+  this.q(".b-plight").onclick = function () { self.setPrinterLight(self.printerLightOn !== true); };
   this.q(".b-pause").onclick = function () { self.printerCmd("pause", "已发送暂停"); };
   this.q(".b-resume").onclick = function () { self.printerCmd("resume", "已发送继续"); };
   var cancelBtn = this.q(".b-cancel");
@@ -593,6 +595,8 @@ Camera.prototype.refreshPrinter = function () {
     self.q(".b-pause").hidden = st !== "printing";
     self.q(".b-resume").hidden = st !== "paused";
     self.q(".b-cancel").hidden = !active;
+    self.q(".b-plight").hidden = !self.info.printer_light;
+    if (self.info.printer_light) self.refreshPrinterLight();
 
     /* 画面 HUD */
     var hud = self.q(".ov.hud"), prog = self.q(".ov.prog");
@@ -609,6 +613,31 @@ Camera.prototype.refreshPrinter = function () {
     sec.hidden = true;
     self.q(".ov.hud").hidden = self.q(".ov.prog").hidden = true;
   });
+};
+Camera.prototype.refreshPrinterLight = function () {
+  var self = this, btn = this.q(".b-plight");
+  api("api/printer/" + encodeURIComponent(this.id) + "/light").then(function (d) {
+    self.printerLightOn = d.on === true ? true : d.on === false ? false : null;
+    btn.classList.toggle("on", self.printerLightOn === true);
+    btn.textContent = self.printerLightOn === true ? "💡 舱灯开" : self.printerLightOn === false ? "💡 舱灯关" : "💡 舱灯";
+    btn.title = self.printerLightOn == null ? "状态未知；点击开灯" : "点击" + (self.printerLightOn ? "关灯" : "开灯");
+  }).catch(function (e) {
+    self.printerLightOn = null;
+    btn.classList.remove("on"); btn.textContent = "💡 舱灯"; btn.title = e.message;
+  });
+};
+Camera.prototype.setPrinterLight = function (on) {
+  var self = this, btn = this.q(".b-plight");
+  btn.disabled = true;
+  api("api/printer/" + encodeURIComponent(this.id) + "/light", {on: on})
+    .then(function (d) {
+      self.printerLightOn = d.on === true;
+      btn.classList.toggle("on", self.printerLightOn);
+      btn.textContent = self.printerLightOn ? "💡 舱灯开" : "💡 舱灯关";
+      btn.title = "点击" + (self.printerLightOn ? "关灯" : "开灯");
+      toast("ARCO 舱内灯已" + (self.printerLightOn ? "开启" : "关闭"), "ok");
+    }).catch(function (e) { toast("ARCO 舱内灯: " + e.message, "err"); })
+    .finally(function () { btn.disabled = false; });
 };
 Camera.prototype.setEta = function (k, v, d, src) {
   var b = this.q(".p-eta");

@@ -33,6 +33,7 @@
 | sleep / sleep_no_viewer | 打印完成且无人观看 / 无人观看时停止推流 |
 | width/height/fps/bitrate | 默认规格 |
 | printer | Moonraker 地址, 叠加显示打印进度/ETA/温度 |
+| printer_light | 可选打印机原生舱灯控制；ARCO 使用 `phrozen_arco` |
 | auto_name | true=名称跟随实际设备 |
 | usb_vendor/usb_reset | 掉线自动 USB 重置自愈(可选) |
 
@@ -46,6 +47,7 @@
 - 摄像头掉线自愈: 重启进程 → 60s 后 USB 重置
 - PTZ/变焦控制(支持云台的相机)
 - 可选 STM32 USB HID 补光灯联动: 通过主机侧 `light_api.py` 读取状态并控制开关/亮度/RGB
+- ARCO 原生舱内灯: 配置 `printer_light: phrozen_arco` 后由后端通过 Moonraker 安全代理开关
 - 每个画面的 ⚙ 展开/收起设置面板(防误触); 单画面模式可用 `#cam=<id>` 直接打开
 - 可选访问密码(HTTP Basic), 只对外提供页面/流文件, cameras.json 和源码不可下载
 

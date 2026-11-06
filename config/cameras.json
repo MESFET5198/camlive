@@ -32,6 +32,7 @@
     "bitrate": "2M",
     "bufsize": "4M",
     "printer": "http://192.168.31.139:7125",
+    "printer_light": "phrozen_arco",
     "sleep": false,
     "sleep_no_viewer": false,
     "timelapse": true
