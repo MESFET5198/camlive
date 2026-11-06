@@ -1,0 +1,13 @@
+[
+  {
+    "id": "cam1",
+    "name": "USB Camera",
+    "auto_name": true,
+    "device": "/dev/video0",
+    "mode": "h264",
+    "width": 1280,
+    "height": 720,
+    "fps": 30,
+    "bitrate": "4M"
+  }
+]

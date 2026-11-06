@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+import base64
 import glob
+import hmac
 import json
 import os
 import re
@@ -19,6 +21,7 @@ LOGDIR = "/app/logs"
 
 FMT_FIELDS = ("width", "height", "fps", "bitrate")
 STREAMS = None  # StreamManager 实例, 启动时创建
+PRINTERS = None  # PrinterMonitor 实例, 启动时创建
 TIMELAPSE = None  # TimelapseManager 实例, 启动时创建
 LIGHT_AUTOMATION = None  # LightAutomation 实例, 启动时创建
 
@@ -28,6 +31,14 @@ TIMELAPSE_FPS = 30
 TIMELAPSE_INTERVAL = 4
 LIGHT_API_URL = os.environ.get("LIGHT_API_URL", "http://127.0.0.1:8788").rstrip("/")
 LIGHT_MAX_BRIGHTNESS = 191  # 75% of 255; enforced by camlive before forwarding
+
+# 访问控制: 设置 CAMLIVE_PASSWORD 后所有页面/接口都需要 HTTP Basic 认证
+AUTH_USER = os.environ.get("CAMLIVE_USER", "admin")
+AUTH_PASSWORD = os.environ.get("CAMLIVE_PASSWORD", "")
+# WebRTC 播放页地址模板; {host} 替换为浏览器访问的主机名, {id} 为摄像头 id
+WEBRTC_URL = os.environ.get("WEBRTC_URL", "http://{host}:8889/{id}/")
+# 只允许下载这些静态文件; cameras.json、源码、日志等一律 404
+STATIC_ALLOW = re.compile(r"^/(?:index\.html|hls\.js|favicon\.ico|vendor/[\w.\-]+\.js|[\w\-]+\.m3u8|[\w\-]+\.ts)?$")
 
 
 def light_request(path, method="GET", body=None, timeout=3):
@@ -41,26 +52,262 @@ def light_request(path, method="GET", body=None, timeout=3):
 
 
 class LightAutomation:
-    """按打印机状态边沿切换补光灯，避免轮询时重复写 USB。"""
+    """按打印机状态边沿切换补光灯，避免轮询时重复写 USB。
+
+    补光灯只有一盏, 但可能有多台打印机/摄像头开启 light_auto:
+    任意一台在打印(或暂停)就开灯, 全部结束才关灯, 避免互相抢开关。"""
 
     ACTIVE_STATES = ("printing", "paused")
 
     def __init__(self):
         self.active = False
+        self.wants = {}  # cid -> bool
 
     def update(self, cid, state):
-        want_on = state in self.ACTIVE_STATES
+        self.wants[cid] = state in self.ACTIVE_STATES
+        want_on = any(self.wants.values())
         if want_on == self.active:
             return
+        who = ",".join(k for k, v in self.wants.items() if v) or cid
         try:
             result = light_request("/api/light/power", "POST", {"on": want_on})
             self.active = want_on
             print("[light] %s 打印状态=%s, 自动%s灯 -> %s" % (
-                cid, state, "开" if want_on else "关", result.get("power")),
+                who, state, "开" if want_on else "关", result.get("power")),
                 flush=True)
         except Exception as e:
+            # 不更新 self.active, 下一轮轮询会重试
             print("[light] %s 自动%s灯失败: %s" % (
-                cid, "开" if want_on else "关", e), flush=True)
+                who, "开" if want_on else "关", e), flush=True)
+
+
+PRINTER_QUERY = ("/printer/objects/query?print_stats&display_status&virtual_sdcard"
+                 "&heater_bed&extruder&extruder1&extruder2&extruder3")
+PRINTER_POLL = 3        # 秒
+FINISHED_STATES = ("complete", "cancelled", "error")
+PRINTER_FRESH = 15      # 缓存超过该时间视为离线
+
+
+def http_json(url, method="GET", timeout=4):
+    req = urllib.request.Request(url, method=method)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
+
+
+_ARCO_LIGHT_CACHE = {}  # printer URL -> {ts, on}; gcode_store 查询短缓存
+_ARCO_LIGHT_LOCK = threading.Lock()
+
+
+def phrozen_arco_light_status(url, max_age=2):
+    """从 Moonraker 命令历史推断 ARCO 舱灯状态。
+
+    原厂固件不把舱灯暴露为 Klipper 对象；触摸屏使用 P0 LED_State，
+    外部控制使用 P0 LED_SetState。历史中没有记录时明确返回未知。
+    """
+    now = time.time()
+    with _ARCO_LIGHT_LOCK:
+        hit = _ARCO_LIGHT_CACHE.get(url)
+    if hit and now - hit["ts"] <= max_age:
+        return hit["on"]
+    data = http_json(url + "/server/gcode_store?count=100", timeout=4)
+    items = data.get("result", {}).get("gcode_store", [])
+    on = None
+    for item in reversed(items):
+        if item.get("type") != "command":
+            continue
+        m = re.fullmatch(r"\s*P0\s+LED_(?:Set)?State\s*=\s*([01])\s*",
+                         str(item.get("message", "")), re.IGNORECASE)
+        if m:
+            on = m.group(1) == "1"
+            break
+    with _ARCO_LIGHT_LOCK:
+        _ARCO_LIGHT_CACHE[url] = {"ts": now, "on": on}
+    return on
+
+
+def set_phrozen_arco_light(url, on):
+    """使用 ARCO 原厂显示程序支持的 P0 指令切换舱内灯。"""
+    script = "P0 LED_SetState=%d" % (1 if on else 0)
+    body = json.dumps({"script": script}).encode()
+    req = urllib.request.Request(url + "/printer/gcode/script", data=body, method="POST")
+    req.add_header("Content-Type", "application/json")
+    with urllib.request.urlopen(req, timeout=5) as r:
+        result = json.loads(r.read() or b"{}")
+    with _ARCO_LIGHT_LOCK:
+        _ARCO_LIGHT_CACHE[url] = {"ts": time.time(), "on": bool(on)}
+    return result
+
+
+class PrinterMonitor:
+    """每台打印机(Moonraker 地址)一个轮询线程, 结果缓存供 API/延时摄影/休眠/补光灯共用。
+    以前每个功能、每个浏览器标签各自去查 Moonraker, 现在统一 3s 一次。"""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cache = {}      # url -> {"ts", "data" | "error"}
+        self.threads = {}
+        self.meta = {}       # (url, filename) -> slicer metadata
+        self.last_job = {}   # url -> {"filename", "end_time", "duration", "state"}
+        self.prev_state = {}
+
+    def ensure(self, url):
+        if not url or url in self.threads:
+            return
+        t = threading.Thread(target=self._loop, args=(url,), daemon=True)
+        self.threads[url] = t
+        t.start()
+
+    def poll_now(self, url):
+        """同步查询一次(启动时用), 返回解析结果或 None"""
+        self._poll(url)
+        return self.get(url)
+
+    def get(self, url):
+        """返回最近一次成功的解析结果; 过期/失败返回 None"""
+        self.ensure(url)
+        with self.lock:
+            c = self.cache.get(url)
+        if not c or "data" not in c or time.time() - c["ts"] > PRINTER_FRESH:
+            return None
+        return c["data"]
+
+    def error(self, url):
+        with self.lock:
+            c = self.cache.get(url) or {}
+        return c.get("error") or "printer not polled yet"
+
+    def state(self, url):
+        d = self.get(url)
+        return d["state"] if d else None
+
+    def _loop(self, url):
+        while True:
+            started = time.monotonic()
+            self._poll(url)
+            time.sleep(max(0.5, PRINTER_POLL - (time.monotonic() - started)))
+
+    def _poll(self, url):
+        try:
+            st = http_json(url + PRINTER_QUERY)["result"]["status"]
+            data = self._parse(url, st)
+            with self.lock:
+                self.cache[url] = {"ts": time.time(), "data": data}
+        except Exception as e:
+            with self.lock:
+                old = self.cache.get(url) or {}
+                old = dict(old)
+                old["error"] = str(e)
+                self.cache[url] = old if "data" in old else {"ts": time.time(), "error": str(e)}
+
+    def _slicer_meta(self, url, filename):
+        """切片软件元数据(预估总时长), 每个文件只查一次"""
+        if not filename:
+            return {}
+        key = (url, filename)
+        if key not in self.meta:
+            try:
+                r = http_json(url + "/server/files/metadata?filename=" +
+                              urllib.parse.quote(filename), timeout=4)
+                self.meta[key] = r.get("result") or {}
+            except Exception:
+                self.meta[key] = {}
+            if len(self.meta) > 64:
+                self.meta.pop(next(iter(self.meta)))
+        return self.meta[key]
+
+    def _last_job(self, url):
+        """打印结束后从 Moonraker 历史记录取实际完成时间"""
+        try:
+            r = http_json(url + "/server/history/list?limit=1&order=desc", timeout=4)
+            job = (r.get("result") or {}).get("jobs", [None])[0] or {}
+            if job.get("end_time"):
+                return {"filename": job.get("filename") or "",
+                        "end_time": int(job["end_time"]),
+                        "duration": int(job.get("print_duration") or 0),
+                        "state": job.get("status")}
+        except Exception:
+            pass
+        return None
+
+    def _parse(self, url, st):
+        ps = st.get("print_stats") or {}
+        ds = st.get("display_status") or {}
+        vs = st.get("virtual_sdcard") or {}
+        info = ps.get("info") or {}
+        state = ps.get("state") or "unknown"
+        filename = ps.get("filename") or ""
+        now = time.time()
+
+        # 进度: 优先 Klipper display_status; virtual_sdcard 的文件位置在部分配置下不是当前进度
+        progress = ds.get("progress")
+        if progress is None and vs.get("file_size"):
+            progress = vs.get("file_position", 0) / float(vs["file_size"])
+        if progress is None:
+            tl, cl = info.get("total_layer"), info.get("current_layer")
+            if tl and cl:
+                progress = cl / float(tl)
+
+        # 剩余时间: 文件进度线性外推(越打越准) 与 切片预估 按进度加权混合
+        pd = ps.get("print_duration") or 0
+        td = ps.get("total_duration")
+        remaining, source = None, None
+        meta = self._slicer_meta(url, filename) if state in ("printing", "paused") else {}
+        slicer_total = meta.get("estimated_time")
+        rem_file = pd / progress * (1 - progress) if progress and progress > 0.02 and pd > 0 else None
+        rem_slicer = max(0.0, slicer_total - pd) if slicer_total else None
+        if rem_file is not None and rem_slicer is not None:
+            w = min(1.0, progress * 2)  # 前半程逐渐从切片预估过渡到实测外推
+            remaining, source = w * rem_file + (1 - w) * rem_slicer, "mixed"
+        elif rem_file is not None:
+            remaining, source = rem_file, "file"
+        elif rem_slicer is not None:
+            remaining, source = rem_slicer, "slicer"
+        elif td and td > pd:
+            remaining, source = td - pd, "klipper"
+        if state not in ("printing", "paused"):
+            remaining, source = None, None
+
+        # 打印结束: 记录完成时间(状态边沿时取历史记录, 取不到就用当前时间)
+        prev = self.prev_state.get(url)
+        self.prev_state[url] = state
+        if state in ("complete", "cancelled", "error"):
+            lj = self.last_job.get(url)
+            # 刚结束, 或者 camlive 启动时打印机已处于结束状态: 查一次历史记录
+            if not lj or prev in ("printing", "paused"):
+                lj = self._last_job(url) or {"filename": filename, "end_time": int(now),
+                                            "duration": int(pd), "state": state}
+                self.last_job[url] = lj
+        elif state in ("printing", "paused"):
+            self.last_job.pop(url, None)
+
+        bed = st.get("heater_bed") or {}
+        # U1 有多个喷头：优先显示当前 active_pin 的喷头，
+        # 不能固定读取基础 extruder（停泊时通常只有约 50°C）。
+        ext = st.get("extruder") or {}
+        for ext_name, ext_data in st.items():
+            if ext_name.startswith("extruder") and isinstance(ext_data, dict) and ext_data.get("active_pin"):
+                ext = ext_data
+                break
+        lj = self.last_job.get(url) or {}
+        return {
+            "state": state,
+            "filename": filename,
+            "progress": round(progress, 4) if progress is not None else None,
+            "layer": info.get("current_layer"),
+            "total_layer": info.get("total_layer"),
+            "print_duration": int(pd) if pd else None,
+            "remaining": int(remaining) if remaining is not None else None,
+            "eta": int(now + remaining) if remaining is not None else None,
+            "eta_source": source,
+            "slicer_total": int(slicer_total) if slicer_total else None,
+            "finished_at": lj.get("end_time"),
+            "finished_duration": lj.get("duration"),
+            "ext_temp": ext.get("temperature"),
+            "ext_target": ext.get("target"),
+            "bed_temp": bed.get("temperature"),
+            "bed_target": bed.get("target"),
+            "updated": int(now),
+        }
 
 
 def load_cams():
@@ -74,15 +321,44 @@ def load_cams():
         return []
 
 
+CAMS_LOCK = threading.Lock()
+
+
 def save_cams(cams):
-    with open(CAMS_FILE, "w") as f:
-        json.dump(cams, f, ensure_ascii=False, indent=2)
+    """原子写入: 先写临时文件再 rename, 避免并发请求/断电写出半个 JSON"""
+    with CAMS_LOCK:
+        tmp = CAMS_FILE + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(cams, f, ensure_ascii=False, indent=2)
+        os.replace(tmp, CAMS_FILE)
+
+
+def update_cam(cid, **fields):
+    with CAMS_LOCK:
+        cams = load_cams()
+    for c in cams:
+        if c.get("id") == cid:
+            c.update(fields)
+    save_cams(cams)
+
+
+_NAME_CACHE = {}  # device -> (expire_ts, name)
 
 
 def cam_display_name(cam):
-    """auto_name 开启时, 名称跟随实际设备(Card type); 失败回退配置名"""
+    """auto_name 开启时, 名称跟随实际设备(Card type); 失败回退配置名。
+    结果缓存 60s, 避免每次状态轮询都 fork v4l2-ctl。"""
     if not cam.get("auto_name"):
         return cam.get("name", cam["id"])
+    hit = _NAME_CACHE.get(cam.get("device"))
+    if hit and hit[0] > time.time():
+        return hit[1]
+    name = _probe_display_name(cam)
+    _NAME_CACHE[cam.get("device")] = (time.time() + 60, name)
+    return name
+
+
+def _probe_display_name(cam):
     try:
         out = subprocess.run(["v4l2-ctl", "-d", cam["device"], "--info"],
                              capture_output=True, text=True, timeout=10).stdout or ""
@@ -314,7 +590,8 @@ class StreamManager:
             n += 1
             self.stale_cnt[cid] = n
             print("[wd] %s unhealthy n=%d poll=%s stale=%s" % (cid, n, p.poll(), stale), flush=True)
-            if n == 1:
+            if n == 1 or (p.poll() is not None and n % 3 == 1 and n < 20):
+                # 进程已退出(例如网络源暂时断开): 每 ~9s 重试一次, 源恢复后很快出画面
                 self.start_cam(cam)
             if n >= 20:
                 self.stale_cnt[cid] = 0
@@ -326,12 +603,17 @@ class StreamManager:
         # 休眠模式: 每 10 轮(~30s)检查打印机状态
         if self.cycle % 5 == 0:
             self._sleep_check()
-        # 延时拍摄: 每轮(3s)检查打印机状态, 自动开始/停止
-        if TIMELAPSE is not None:
-            for cam in load_cams():
-                if not cam.get("timelapse") or not cam.get("printer"):
-                    continue
+        for cam in load_cams():
+            if not cam.get("printer"):
+                continue
+            # 延时拍摄: 每轮(3s)按打印机状态自动开始/停止
+            if TIMELAPSE is not None and cam.get("timelapse"):
                 TIMELAPSE.check(cam)
+            # 补光灯联动: 与是否开启延时拍摄无关
+            if LIGHT_AUTOMATION is not None and cam.get("light_auto"):
+                st = PRINTERS.state(cam["printer"])
+                if st is not None:
+                    LIGHT_AUTOMATION.update(cam["id"], st)
 
     def _sleep_check(self):
         """打印机完成/出错 -> 停止推流(休眠); 重新打印 -> 自动唤醒"""
@@ -339,12 +621,8 @@ class StreamManager:
             if not cam.get("sleep") or not cam.get("printer"):
                 continue
             cid = cam["id"]
-            try:
-                with urllib.request.urlopen(
-                        cam["printer"] + "/printer/objects/query?print_stats",
-                        timeout=3) as r:
-                    st = json.loads(r.read())["result"]["status"]["print_stats"]["state"]
-            except Exception:
+            st = PRINTERS.state(cam["printer"])
+            if st is None:
                 continue
             if self.sleeping.get(cid):
                 if st in ("printing", "paused", "standby"):
@@ -352,7 +630,7 @@ class StreamManager:
                     self.start_cam(cam)
                     print("[sleep] %s 打印机重新开始(%s), 唤醒推流" % (cid, st), flush=True)
                 continue
-            if st in ("complete", "error", "cancel"):
+            if st in FINISHED_STATES:
                 # 打印完成: 仅在没有观众(页面关闭45s)时休眠, 避免正在观看时流被停掉
                 if time.time() - LAST_SEEN[0] > 45:
                     self.stop_cam(cid)
@@ -368,23 +646,15 @@ class StreamManager:
             if not cam.get("printer"):
                 continue
             cid = cam["id"]
-            try:
-                with urllib.request.urlopen(
-                        cam["printer"] + "/printer/objects/query?print_stats",
-                        timeout=3) as r:
-                    st = json.loads(r.read())["result"]["status"]["print_stats"]["state"]
-            except Exception:
+            st = PRINTERS.state(cam["printer"])
+            if st is None:
                 continue
             prev = self.printer_state.get(cid)
             self.printer_state[cid] = st
-            if (st == "printing" and prev in ("complete", "cancel", "error", "standby")
+            if (st == "printing" and prev in FINISHED_STATES + ("standby",)
                     and cam.get("sharpen")):
-                cams = load_cams()
-                for c in cams:
-                    if c["id"] == cid:
-                        c["sharpen"] = False
-                save_cams(cams)
-                self.start_cam(cam)
+                update_cam(cid, sharpen=False)
+                self.start_cam(get_cam(cid))
                 print("[sharpen] %s 检测到新打印(由%s), 自动关闭锐化并重启流" % (cid, prev), flush=True)
         # 无观众休眠: 页面关闭 60s 后停止推流
         for cam in load_cams():
@@ -434,8 +704,13 @@ class TimelapseManager:
         os.makedirs(d, exist_ok=True)
         cam = get_cam(cid) or {}
         device = str(cam.get("device", ""))
+        snapshot_url = None
         if device.startswith(("http://", "https://")):
             snapshot_url = device.replace("action=stream", "action=snapshot")
+        elif cam.get("mode") == "mjpeg":
+            # MJPEG 模式没有 HLS 清单, 直接向本机 mjpeg_server 要单帧
+            snapshot_url = "tcp://127.0.0.1:%d" % STREAMS.mjpeg_port(cid)
+        if snapshot_url:
             return subprocess.Popen(
                 ["python3", "/app/timelapse_snapshot.py", snapshot_url, d,
                  str(start_number), str(TIMELAPSE_INTERVAL)],
@@ -464,7 +739,8 @@ class TimelapseManager:
             print("[timelapse] %s 启动抓帧失败: %s" % (cid, e), flush=True)
             return
         self.active[cid] = {"proc": p, "dir": d, "started": started,
-                            "filename": cam.get("_tl_filename", "")}
+                            "filename": cam.get("_tl_filename", ""),
+                            "spawned": time.time()}
         print("[timelapse] %s 打印机开始打印, 开始延时拍摄 -> %s" % (cid, d), flush=True)
 
     def resume(self, cam):
@@ -474,7 +750,7 @@ class TimelapseManager:
             return True
         base = os.path.join(TIMELAPSE_ROOT, cid)
         try:
-            subs = sorted(glob.glob(os.path.join(base, "2026*")), reverse=True)
+            subs = sorted(glob.glob(os.path.join(base, "[0-9]" * 8 + "_" + "[0-9]" * 6)), reverse=True)
         except Exception:
             subs = []
         for d in subs:
@@ -491,7 +767,8 @@ class TimelapseManager:
                 print("[timelapse] %s 续拍失败: %s" % (cid, e), flush=True)
                 return False
             self.active[cid] = {"proc": p, "dir": d, "started": started,
-                                "filename": cam.get("_tl_filename", "")}
+                                "filename": cam.get("_tl_filename", ""),
+                            "spawned": time.time()}
             print("[timelapse] %s 恢复续拍 %s (已有%d帧, 从%d继续)" % (cid, d, n, n + 1), flush=True)
             return True
         return False
@@ -561,6 +838,9 @@ class TimelapseManager:
                 newest = max((os.path.getmtime(x) for x in frames), default=0)
                 if newest and time.time() - newest < 20:
                     continue
+                # 刚启动/重启的进程还没来得及出第一帧(HLS 打开需要几秒), 不要立刻杀掉
+                if time.time() - a.get("spawned", 0) < 30:
+                    continue
                 try:
                     a["proc"].terminate()
                     a["proc"].wait(3)
@@ -576,25 +856,19 @@ class TimelapseManager:
                 print("[timelapse] %s 重启抓帧失败: %s" % (cid, e), flush=True)
                 continue
             a["proc"] = p
+            a["spawned"] = time.time()
             print("[timelapse] %s 抓帧进程异常退出, 从帧 %d 重新开始" % (cid, n), flush=True)
 
     def check(self, cam):
         """依据打印机状态驱动开始/停止; 打印中/暂停 -> 拍摄, 完成/出错/取消 -> 收尾"""
         cid = cam["id"]
-        try:
-            with urllib.request.urlopen(
-                    cam["printer"] + "/printer/objects/query?print_stats",
-                    timeout=3) as r:
-                d = json.loads(r.read())["result"]["status"]["print_stats"]
-            st = d.get("state") or "unknown"
-            fname = d.get("filename") or ""
-        except Exception:
+        d = PRINTERS.get(cam["printer"])
+        if not d:
             return
+        st, fname = d["state"], d["filename"]
         prev = self.last_state.get(cid)
         self.last_state[cid] = st
         cam["_tl_filename"] = fname
-        if LIGHT_AUTOMATION is not None and cam.get("light_auto"):
-            LIGHT_AUTOMATION.update(cid, st)
         if st in ("printing", "paused"):
             if prev not in ("printing", "paused"):
                 self.start(cam)
@@ -606,6 +880,52 @@ class TimelapseManager:
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=WEBROOT, **kw)
+
+    def log_message(self, fmt, *args):
+        # 每个 HLS 分片都打一行访问日志太吵, 只记录非 2xx/3xx
+        if len(args) >= 2 and str(args[1])[:1] in ("2", "3"):
+            return
+        super().log_message(fmt, *args)
+
+    def end_headers(self):
+        path = urllib.parse.urlsplit(self.path).path
+        if path.endswith(".m3u8") or path.startswith("/api/"):
+            self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+    def _authorized(self):
+        if not AUTH_PASSWORD:
+            return True
+        h = self.headers.get("Authorization", "")
+        if h.startswith("Basic "):
+            try:
+                user, _, pw = base64.b64decode(h[6:]).decode("utf-8").partition(":")
+                if hmac.compare_digest(user.encode(), AUTH_USER.encode()) and \
+                        hmac.compare_digest(pw.encode(), AUTH_PASSWORD.encode()):
+                    return True
+            except Exception:
+                pass
+        body = b"authentication required"
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="camlive", charset="UTF-8"')
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+        return False
+
+    def _static(self, path, head=False):
+        if not STATIC_ALLOW.match(path):
+            self.send_error(404)
+            return
+        if head:
+            super().do_HEAD()
+        else:
+            super().do_GET()
+
+    def do_HEAD(self):
+        if not self._authorized():
+            return
+        self._static(urllib.parse.urlsplit(self.path).path, head=True)
 
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False).encode()
@@ -629,27 +949,36 @@ class Handler(SimpleHTTPRequestHandler):
                 "bitrate": cam.get("bitrate", ""),
                 "stream": cam["id"] + ".m3u8",
                 "webrtc": bool(cam.get("webrtc", False)),
+                "printer": bool(cam.get("printer")),
+                "printer_light": cam.get("printer_light"),
                 "online": online,
                 "timelapse": bool(TIMELAPSE.active.get(cam["id"])) if TIMELAPSE else False}
 
     def do_GET(self):
-        if self.path == "/api/light/health":
+        if not self._authorized():
+            return
+        path = urllib.parse.urlsplit(self.path).path
+        if path == "/api/info":
+            self._json({"webrtc_url": WEBRTC_URL, "auth": bool(AUTH_PASSWORD),
+                        "light_max_brightness": LIGHT_MAX_BRIGHTNESS})
+            return
+        if path == "/api/light/health":
             try:
                 self._json(light_request("/health"))
             except Exception as e:
                 self._json({"ok": False, "available": False, "last_error": str(e)}, 503)
             return
-        if self.path == "/api/light/status":
+        if path == "/api/light/status":
             try:
                 self._json(light_request("/api/light/status"))
             except Exception as e:
                 self._json({"ok": False, "available": False, "last_error": str(e)}, 503)
             return
-        if re.match(r"^/api/(cam|printer)/", self.path):
+        if path == "/api/cams" or re.match(r"^/api/(cam|printer)/", path):
             LAST_SEEN[0] = time.time()
-        m = re.match(r"^/preview/([^/]+)/stream(?:\?.*)?$", self.path)
+        m = re.match(r"^/preview/([^/]+)/(stream|snapshot)$", path)
         if m:
-            cid = m.group(1)
+            cid, kind = m.group(1), m.group(2)
             cam = get_cam(cid)
             if not cam:
                 self._json({"error": "no such camera"}, 404)
@@ -659,9 +988,30 @@ class Handler(SimpleHTTPRequestHandler):
                 return
             try:
                 s = socket.create_connection(("127.0.0.1", STREAMS.mjpeg_port(cid)), timeout=5)
+                s.sendall(b"SNAP\n" if kind == "snapshot" else b"STREAM\n")
             except OSError:
                 self._json({"error": "mjpeg stream down"}, 503)
                 return
+            if kind == "snapshot":
+                try:
+                    data = b""
+                    while True:
+                        chunk = s.recv(65536)
+                        if not chunk:
+                            break
+                        data += chunk
+                finally:
+                    s.close()
+                if data[:2] != b"\xff\xd8":
+                    self._json({"error": "no frame yet"}, 503)
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+                return
+            s.settimeout(30)
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=ffmpeg")
             self.send_header("Cache-Control", "no-cache")
@@ -678,67 +1028,38 @@ class Handler(SimpleHTTPRequestHandler):
             finally:
                 s.close()
             return
-        m = re.match(r"^/api/printer/([^/]+)$", self.path)
+        m = re.match(r"^/api/printer/([^/]+)$", path)
         if m:
             cam = get_cam(m.group(1))
             if not cam or not cam.get("printer"):
                 self._json({"error": "no printer configured"}, 404)
                 return
-            try:
-                with urllib.request.urlopen(
-                    cam["printer"] + "/printer/objects/query?print_stats&display_status&virtual_sdcard&heater_bed&extruder&extruder1&extruder2&extruder3",
-                        timeout=4) as r:
-                    d = json.loads(r.read())
-                st = d["result"]["status"]
-                ps = st["print_stats"]
-                ds = st.get("display_status") or {}
-                vs = st.get("virtual_sdcard") or {}
-                info = ps.get("info") or {}
-                # 优先使用 Klipper display_status；virtual_sdcard 的文件位置
-                # 在部分配置下不是当前打印进度。
-                progress = None
-                progress = ds.get("progress")
-                if progress is None and vs.get("file_size"):
-                    progress = vs.get("file_position", 0) / float(vs["file_size"])
-                if progress is None:
-                    tl, cl = info.get("total_layer"), info.get("current_layer")
-                    if tl and cl:
-                        progress = cl / float(tl)
-                # ETA: 用 display_status 的"时间进度"做线性外推(自修正, 越打越准);
-                # Klipper 的 total_duration 在打印初期是垃圾值, 仅作兜底
-                eta = None
-                pd = ps.get("print_duration") or 0
-                td = ps.get("total_duration")
-                prog_time = ds.get("progress")
-                if prog_time and prog_time > 0.02:
-                    eta = time.time() + pd / prog_time * (1 - prog_time)
-                elif td and td > pd:
-                    eta = time.time() + (td - pd)
-                bed = st.get("heater_bed") or {}
-                # U1 有多个喷头：优先显示当前 active_pin 的喷头，
-                # 不能固定读取基础 extruder（停泊时通常只有约 50°C）。
-                ext = st.get("extruder") or {}
-                for ext_name, ext_data in st.items():
-                    if ext_name.startswith("extruder") and isinstance(ext_data, dict) and ext_data.get("active_pin"):
-                        ext = ext_data
-                        break
-                self._json({
-                    "state": ps.get("state") or "unknown",
-                    "filename": ps.get("filename") or "",
-                    "progress": round(progress, 4) if progress is not None else None,
-                    "layer": info.get("current_layer"),
-                    "total_layer": info.get("total_layer"),
-                    "eta": int(eta) if eta else None,
-                    "ext_temp": ext.get("temperature"),
-                    "ext_target": ext.get("target"),
-                })
-            except Exception as e:
-                self._json({"error": "printer unreachable: %s" % e}, 502)
+            d = PRINTERS.get(cam["printer"]) or PRINTERS.poll_now(cam["printer"])
+            if d:
+                self._json(d)
+            else:
+                self._json({"error": "printer unreachable: %s" % PRINTERS.error(cam["printer"])}, 502)
             return
-        if self.path == "/api/cams":
+        m = re.match(r"^/api/printer/([^/]+)/light$", path)
+        if m:
+            cam = get_cam(m.group(1))
+            if not cam or not cam.get("printer"):
+                self._json({"error": "no printer configured"}, 404)
+                return
+            if cam.get("printer_light") != "phrozen_arco":
+                self._json({"error": "printer light not configured"}, 404)
+                return
+            try:
+                on = phrozen_arco_light_status(cam["printer"])
+                self._json({"ok": True, "available": True, "on": on,
+                            "known": on is not None, "kind": "phrozen_arco"})
+            except Exception as e:
+                self._json({"error": "printer light status failed: %s" % e}, 502)
+            return
+        if path == "/api/cams":
             self._json([self._cam_summary(c) for c in load_cams()])
             return
-        m = re.match(r"^/api/cam/([^/]+)$", self.path)
+        m = re.match(r"^/api/cam/([^/]+)$", path)
         if m:
             cam = get_cam(m.group(1))
             if not cam:
@@ -759,9 +1080,11 @@ class Handler(SimpleHTTPRequestHandler):
             d["ptz"] = get_ptz(cam["device"], controls) if controls else None
             self._json(d)
             return
-        super().do_GET()
+        self._static(path)
 
     def do_POST(self):
+        if not self._authorized():
+            return
         m = re.match(r"^/api/light/(power|brightness|color)$", self.path)
         if m:
             try:
@@ -807,17 +1130,47 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as e:
                 self._json({"error": "printer cmd failed: %s" % e}, 502)
             return
+        m = re.match(r"^/api/printer/([^/]+)/light$", self.path)
+        if m:
+            cam = get_cam(m.group(1))
+            if not cam or not cam.get("printer"):
+                self._json({"error": "no printer configured"}, 404)
+                return
+            if cam.get("printer_light") != "phrozen_arco":
+                self._json({"error": "printer light not configured"}, 404)
+                return
+            try:
+                n = int(self.headers.get("Content-Length", 0))
+                req = json.loads(self.rfile.read(n) or b"{}")
+            except Exception:
+                self._json({"error": "bad json"}, 400)
+                return
+            on = req.get("on")
+            if type(on) is not bool:
+                self._json({"error": "on must be a boolean"}, 400)
+                return
+            try:
+                set_phrozen_arco_light(cam["printer"], on)
+                self._json({"ok": True, "on": on, "kind": "phrozen_arco"})
+            except Exception as e:
+                self._json({"error": "printer light command failed: %s" % e}, 502)
+            return
         m = re.match(r"^/api/cam/([^/]+)/wake$", self.path)
         if m:
             cam = get_cam(m.group(1))
             if not cam:
                 self._json({"error": "no such camera"}, 404)
                 return
+            was_sleeping = STREAMS.sleeping.get(cam["id"], False)
             STREAMS.sleeping[cam["id"]] = False
             STREAMS.sleep_reason.pop(cam["id"], None)
             LAST_SEEN[0] = time.time()
-            STREAMS.start_cam(cam)
-            self._json({"ok": True})
+            p = STREAMS.procs.get(cam["id"])
+            # 仅在休眠或进程不在时才(重)启动; 否则每打开一次页面就会把所有流重启一遍
+            restarted = was_sleeping or p is None or p.poll() is not None
+            if restarted:
+                STREAMS.start_cam(cam)
+            self._json({"ok": True, "restarted": restarted})
             return
         m = re.match(r"^/api/cam/([^/]+)/(config|ptz|control|mode)$", self.path)
         if not m:
@@ -847,11 +1200,7 @@ class Handler(SimpleHTTPRequestHandler):
             if mode not in ("h264", "mjpeg"):
                 self._json({"error": "mode must be h264 or mjpeg"}, 400)
                 return
-            cams = load_cams()
-            for c in cams:
-                if c["id"] == cid:
-                    c["mode"] = mode
-            save_cams(cams)
+            update_cam(cid, mode=mode)
             STREAMS.start_cam(get_cam(cid))
             self._json({"ok": True, "mode": mode})
             return
@@ -922,21 +1271,20 @@ class Handler(SimpleHTTPRequestHandler):
             self._json({"error": "unsupported resolution/fps", "choices": formats}, 400)
             return
         try:
-            br = int(str(bitrate).replace("M", "").replace("K", ""))
-            br_unit = "K" if "K" in str(bitrate) else "M"
-            if br < 1 or br > 16:
+            m2 = re.fullmatch(r"(\d+)([KM])", str(bitrate).strip().upper())
+            br, br_unit = int(m2.group(1)), m2.group(2)
+            if not ((br_unit == "M" and 1 <= br <= 16) or
+                    (br_unit == "K" and 100 <= br <= 16000)):
                 raise ValueError
             bitrate = "%d%s" % (br, br_unit)
         except Exception:
             self._json({"error": "bitrate must be e.g. 2M or 1500K"}, 400)
             return
-        cams = load_cams()
-        for c in cams:
-            if c["id"] == cid:
-                c["width"], c["height"], c["fps"], c["bitrate"] = w, h, fps, bitrate
-        save_cams(cams)
+        update_cam(cid, width=w, height=h, fps=fps, bitrate=bitrate)
         try:
             confirmed = switch_config(cam, w, h, fps)
+            # switch_config 会停流并从 procs 移除, watchdog 不会再管它, 必须显式重启
+            STREAMS.start_cam(get_cam(cid))
         except Exception as e:
             self._json({"error": "restart failed: %s" % e}, 500)
             return
@@ -947,24 +1295,21 @@ class Handler(SimpleHTTPRequestHandler):
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8081
     STREAMS = StreamManager()
+    PRINTERS = PrinterMonitor()
     TIMELAPSE = TimelapseManager()
     LIGHT_AUTOMATION = LightAutomation()
     LAST_SEEN = [time.time()]  # 页面心跳(任意观众)
     for cam in load_cams():
         STREAMS.start_cam(cam)
         # 容器重启时若打印机已在打印, 立即恢复延时拍摄(优先续拍已有帧, 否则新开)
-        if cam.get("timelapse") and cam.get("printer"):
-            try:
-                with urllib.request.urlopen(
-                        cam["printer"] + "/printer/objects/query?print_stats",
-                        timeout=3) as r:
-                    st = json.loads(r.read())["result"]["status"]["print_stats"].get("state")
-                if st in ("printing", "paused"):
-                    if not TIMELAPSE.resume(cam):
-                        TIMELAPSE.start(cam)
-                    TIMELAPSE.last_state[cam["id"]] = st
-            except Exception:
-                pass
+        if cam.get("printer"):
+            d = PRINTERS.poll_now(cam["printer"])  # 同时启动该打印机的轮询线程
+            st = d["state"] if d else None
+            if cam.get("timelapse") and st in ("printing", "paused"):
+                cam["_tl_filename"] = d["filename"]
+                if not TIMELAPSE.resume(cam):
+                    TIMELAPSE.start(cam)
+                TIMELAPSE.last_state[cam["id"]] = st
 
     def watchdog():
         while True:

@@ -4,6 +4,6 @@ rtspAddress: :8554
 webrtc: true
 webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
-webrtcAdditionalHosts: [192.168.31.100]
+# 浏览器需要连接的局域网 IP 由 compose.yml 的 MTX_WEBRTCADDITIONALHOSTS 提供(取 .env 的 HOST_IP)
 paths:
   all_others:

@@ -23,7 +23,7 @@
     "id": "arco",
     "name": "普罗森 ARCO 内置摄像头",
     "auto_name": false,
-    "device": "http://192.168.31.227:8080/webcam/?action=stream",
+    "device": "http://192.168.31.139:8080/webcam/?action=stream",
     "mode": "mjpeg",
     "rotate": 180,
     "width": 1280,
@@ -31,7 +31,8 @@
     "fps": 25,
     "bitrate": "2M",
     "bufsize": "4M",
-    "printer": "http://192.168.31.227:7125",
+    "printer": "http://192.168.31.139:7125",
+    "printer_light": "phrozen_arco",
     "sleep": false,
     "sleep_no_viewer": false,
     "timelapse": true

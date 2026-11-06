@@ -2,517 +2,993 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<title>USB Camera Live</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0d0f12">
+<title>CamLive</title>
 <style>
-  html,body{margin:0;height:100%;background:#111;display:flex;flex-direction:column;align-items:center;font-family:sans-serif}
-  h2{color:#ddd;font-weight:400;margin:10px}
-  video,iframe{width:100%;max-height:76vh;background:#000;border-radius:6px;display:block;border:0}
-  iframe.webrtc{height:calc((98vw - 34px) * 0.28125);min-height:190px;object-fit:contain}
-  .err{display:none;color:#f66;font-size:12px;margin:6px 0}
-  .cams{display:flex;gap:14px;width:98vw;justify-content:center;flex-wrap:wrap}
-  .cam{position:relative;flex:1 1 46%;min-width:340px;background:#18181b;border:1px solid #333;border-radius:8px;padding:10px;box-sizing:border-box}
-  .cam h3{color:#ddd;font-weight:400;margin:0 0 8px;font-size:14px;display:flex;justify-content:space-between;align-items:center}
-  .cam h3 .st{color:#6f6;font-size:12px;font-weight:400}
-  .cam h3 .st.off{color:#f66}
-  .cam h3 .btns{margin-left:auto;display:flex;gap:6px}
-  .cam h3 .btns button{font-size:12px;padding:3px 10px}
-  .cam:fullscreen{flex:1 1 100%;width:100%;background:#111;overflow:auto}
-  .cam:fullscreen video{max-height:calc(100vh - 190px)}
-  .cam:fullscreen iframe.webrtc{height:calc(100vh - 190px);max-height:calc(100vh - 190px)}
-  body.single .cam{display:none}
-  body.single .cam.show{display:block;flex:1 1 100%;min-width:0}
-  body.single .cam.show video{max-height:calc(100vh - 190px)}
-  body.single .cam.show iframe.webrtc{height:calc(100vh - 190px);max-height:calc(100vh - 190px)}
-  #backbtn{display:none;position:fixed;top:10px;right:14px;z-index:99}
-  .cfgrow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:#222;border:1px solid #333;border-radius:6px;padding:8px 10px;margin:8px 0}
-  .cfgrow label{color:#aaa;font-size:12px}
-  .ptzrow{display:flex;gap:8px;align-items:center;background:#222;border:1px solid #333;border-radius:6px;padding:8px 10px;margin:8px 0;flex-wrap:wrap}
-  .ptzrow .st{color:#6f6;font-size:11px;margin-left:auto}
-  .ctrlrow{display:flex;flex-wrap:wrap;gap:10px;background:#222;border:1px solid #333;border-radius:6px;padding:8px 10px;margin:8px 0}
-  .grp{border-left:2px solid #444;padding-left:10px;display:flex;flex-direction:column;gap:4px}
-  .grp .gt{color:#999;font-size:11px}
-  .grp label{color:#aaa;font-size:12px;display:flex;align-items:center;gap:6px}
-  .grp input[type=range]{width:110px}
-  .printer{margin-top:8px;background:#222;border:1px solid #333;border-radius:6px;padding:8px 12px;display:none;font-size:12px}
-  .vtime{position:absolute;bottom:12px;left:50%;transform:translateX(-50%);z-index:6;background:rgba(0,0,0,.45);color:#eee;font:12px/1.4 monospace;padding:2px 8px;border-radius:3px;pointer-events:none;display:none}
-  .printer .pline{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-  .printer .pst{font-weight:bold}
-  .printer .pst.printing{color:#0f0}
-  .printer .pst.paused{color:#fa0}
-  .printer .pst.complete{color:#0af}
-  .printer .pname{color:#aaa;word-break:break-all;flex:1;min-width:120px}
-  .printer .pp{color:#fff;font-weight:bold;min-width:52px;text-align:right}
-  .printer .pbar{height:5px;background:#333;border-radius:3px;margin-top:6px;overflow:hidden}
-  .printer .pcmd{font-size:11px;padding:2px 10px;border-radius:4px;cursor:pointer;border:0}
-  .printer .pcmd.pause{background:#fa0;color:#111}
-  .printer .pcmd.resume{background:#0a7dff;color:#fff}
-  .printer .pbar i{display:block;height:100%;background:#0a7dff;width:0%}
-  .grp .v{color:#eee;font-size:11px;min-width:34px}
-  select,input,button{background:#2a2a2e;color:#eee;border:1px solid #444;border-radius:4px;padding:5px 8px;font-size:13px}
-  button{background:#0a7dff;color:#fff;border:0;cursor:pointer}
-  button:disabled{opacity:.5}
+:root{
+  --bg:#0d0f12; --panel:#15181d; --panel2:#1c2027; --line:#2a2f38; --line2:#363c47;
+  --text:#e6e8eb; --dim:#9aa3af; --mute:#6b7280;
+  --accent:#3b82f6; --accent2:#2563eb; --ok:#22c55e; --warn:#f59e0b; --bad:#ef4444; --info:#06b6d4;
+  --r:12px; --r2:8px;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.45 system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;-webkit-font-smoothing:antialiased}
+button,select,input{font:inherit;color:inherit}
+[hidden]{display:none!important}
+
+/* ---------- 顶栏 ---------- */
+.topbar{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:12px;
+  padding:10px 16px;padding-top:max(10px,env(safe-area-inset-top));
+  background:rgba(13,15,18,.85);backdrop-filter:blur(10px);border-bottom:1px solid var(--line)}
+.brand{display:flex;align-items:center;gap:8px;font-weight:600;letter-spacing:.3px}
+.brand i{width:9px;height:9px;border-radius:50%;background:var(--bad);box-shadow:0 0 8px var(--bad)}
+.brand small{color:var(--mute);font-weight:400}
+.spacer{flex:1}
+.clock{font:12px var(--mono);color:var(--dim)}
+
+/* ---------- 通用控件 ---------- */
+.btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 11px;border-radius:7px;
+  background:var(--panel2);border:1px solid var(--line2);cursor:pointer;white-space:nowrap;font-size:13px}
+.btn:hover{border-color:#4b5563;background:#232832}
+.btn:disabled{opacity:.45;cursor:default}
+.btn.pri{background:var(--accent);border-color:var(--accent)}
+.btn.pri:hover{background:var(--accent2)}
+.btn.warn{background:rgba(245,158,11,.15);border-color:rgba(245,158,11,.5);color:#fbbf24}
+.btn.danger{background:rgba(239,68,68,.12);border-color:rgba(239,68,68,.45);color:#f87171}
+.btn.danger.armed{background:var(--bad);color:#fff}
+.btn.icon{width:30px;padding:0;justify-content:center}
+.btn.on{background:rgba(59,130,246,.18);border-color:var(--accent);color:#93c5fd}
+select,input[type=number]{height:30px;background:var(--panel2);border:1px solid var(--line2);border-radius:7px;padding:0 8px}
+input[type=range]{accent-color:var(--accent);width:100%}
+.seg{display:inline-flex;border:1px solid var(--line2);border-radius:7px;overflow:hidden}
+.seg button{height:28px;padding:0 9px;background:transparent;border:0;cursor:pointer;font-size:12px;color:var(--dim)}
+.seg button.on{background:var(--accent);color:#fff}
+.switch{position:relative;width:34px;height:20px;flex:none}
+.switch input{opacity:0;width:0;height:0}
+.switch span{position:absolute;inset:0;background:#374151;border-radius:20px;transition:.2s;cursor:pointer}
+.switch span:before{content:"";position:absolute;width:14px;height:14px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+.switch input:checked+span{background:var(--accent)}
+.switch input:checked+span:before{transform:translateX(14px)}
+
+/* ---------- 补光灯 ---------- */
+.light{display:flex;align-items:center;gap:10px;padding:4px 10px;border:1px solid var(--line2);border-radius:999px;background:var(--panel)}
+.light .lbl{font-size:12px;color:var(--dim)}
+.light input[type=range]{width:110px}
+.light .val{font:12px var(--mono);color:var(--dim);min-width:34px;text-align:right}
+
+/* ---------- 网格 ---------- */
+.grid{display:grid;gap:14px;padding:14px;align-items:start;grid-template-columns:repeat(auto-fit,minmax(min(100%,460px),1fr))}
+body.cols1 .grid{grid-template-columns:1fr;max-width:1400px;margin:0 auto}
+body.solo .cam:not(.focus){display:none}
+body.solo .grid{grid-template-columns:1fr}
+
+/* ---------- 卡片 ---------- */
+.cam{background:var(--panel);border:1px solid var(--line);border-radius:var(--r);overflow:hidden;display:flex;flex-direction:column;min-width:0}
+.cam-head{display:flex;align-items:center;gap:10px;padding:10px 12px;flex-wrap:wrap}
+.cam-title{display:flex;align-items:center;gap:8px;min-width:0;flex:1}
+.cam-title h2{margin:0;font-size:15px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.led{width:8px;height:8px;border-radius:50%;background:var(--mute);flex:none}
+.led.ok{background:var(--ok);box-shadow:0 0 6px var(--ok)}
+.led.bad{background:var(--bad)}
+.led.sleep{background:var(--warn)}
+.chip{font:11px var(--mono);color:var(--dim);background:var(--panel2);border:1px solid var(--line);padding:2px 7px;border-radius:999px;white-space:nowrap}
+.chip.rec{color:#fca5a5;border-color:rgba(239,68,68,.4);background:rgba(239,68,68,.1)}
+.chip.rec:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--bad);margin-right:5px;vertical-align:1px;animation:blink 1.4s infinite}
+@keyframes blink{50%{opacity:.25}}
+.cam-actions{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+
+/* ---------- 画面 ---------- */
+.stage{position:relative;background:#000;aspect-ratio:16/9;width:100%;overflow:hidden}
+.stage video,.stage img,.stage iframe{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;border:0;background:#000;display:block}
+body.solo .cam.focus .stage{aspect-ratio:auto;height:calc(100vh - 230px);min-height:240px}
+.cam:fullscreen{border:0;border-radius:0}
+.cam:fullscreen .stage{aspect-ratio:auto;flex:1}
+.ov{position:absolute;z-index:3;pointer-events:none}
+.ov.msg{inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;color:var(--dim);font-size:13px;background:rgba(0,0,0,.35)}
+.ov.msg .spin{width:22px;height:22px;border:2px solid #374151;border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite}
+.ov.msg button{pointer-events:auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.ov.hud{left:10px;bottom:10px;right:10px;display:flex;justify-content:space-between;gap:8px}
+.ov.hud span{font:12px/1 var(--mono);background:rgba(0,0,0,.55);color:#f3f4f6;padding:5px 8px;border-radius:6px;backdrop-filter:blur(4px)}
+.ov.prog{left:0;right:0;bottom:0;height:3px;background:rgba(255,255,255,.08)}
+.ov.prog i{display:block;height:100%;width:0;background:var(--accent);transition:width .6s}
+
+/* ---------- 打印机 ---------- */
+.printer{padding:10px 12px;border-top:1px solid var(--line);display:grid;gap:8px}
+.p-top{display:flex;align-items:center;gap:8px;min-width:0}
+.pill{font-size:11px;font-weight:600;padding:2px 8px;border-radius:999px;background:#374151;color:#e5e7eb;flex:none}
+.pill.printing{background:rgba(34,197,94,.18);color:#4ade80}
+.pill.paused{background:rgba(245,158,11,.18);color:#fbbf24}
+.pill.complete{background:rgba(6,182,212,.18);color:#22d3ee}
+.pill.error,.pill.cancelled,.pill.cancel{background:rgba(239,68,68,.18);color:#f87171}
+.p-file{color:var(--dim);font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1;min-width:0}
+.p-pct{font:600 15px var(--mono)}
+.bar{height:6px;background:var(--panel2);border-radius:6px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .6s}
+.p-eta{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;padding:8px 10px;border-radius:8px;background:var(--panel2);border:1px solid var(--line)}
+.p-eta .k{font-size:12px;color:var(--dim)}
+.p-eta .v{font:600 20px var(--mono);color:var(--text)}
+.p-eta .d{font-size:12px;color:var(--dim)}
+.p-eta .src{margin-left:auto;font-size:11px;color:var(--mute)}
+.p-eta.done .v{color:#22d3ee}
+.p-eta.paused .v{color:#fbbf24}
+.p-stats{display:flex;flex-wrap:wrap;gap:6px 16px;font-size:12px;color:var(--dim)}
+.p-stats b{color:var(--text);font:500 12px var(--mono)}
+.p-btns{display:flex;gap:6px;margin-left:auto}
+
+/* ---------- 设置 ---------- */
+.settings{border-top:1px solid var(--line);background:#12151a}
+.tabs{display:flex;gap:2px;padding:6px 8px 0;border-bottom:1px solid var(--line)}
+.tabs button{background:none;border:0;padding:7px 12px;cursor:pointer;color:var(--dim);border-bottom:2px solid transparent;font-size:13px}
+.tabs button.on{color:var(--text);border-bottom-color:var(--accent)}
+.pane{padding:12px;display:grid;gap:12px}
+.form{display:grid;grid-template-columns:repeat(auto-fill,minmax(130px,1fr));gap:10px;align-items:end}
+.form label{display:grid;gap:4px;font-size:12px;color:var(--dim)}
+.form select{width:100%}
+.form-foot{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.note{font-size:12px;color:var(--mute)}
+.ctl-groups{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.ctl-group{background:var(--panel);border:1px solid var(--line);border-radius:var(--r2);padding:10px;display:grid;gap:8px}
+.ctl-group h4{margin:0;font-size:12px;font-weight:600;color:var(--dim);display:flex;align-items:center;justify-content:space-between}
+.ctl-group h4 label{display:flex;align-items:center;gap:6px;font-weight:400}
+.ctl{display:grid;grid-template-columns:76px 1fr 46px;align-items:center;gap:8px;font-size:12px;color:var(--dim)}
+.ctl output{font:12px var(--mono);color:var(--text);text-align:right}
+.ptz{display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+.dpad{display:grid;grid-template-columns:repeat(3,38px);grid-template-rows:repeat(3,38px);gap:4px}
+.dpad .btn{width:38px;height:38px;padding:0;justify-content:center}
+.zoom{flex:1;min-width:180px;display:grid;gap:6px;font-size:12px;color:var(--dim)}
+
+/* ---------- 提示 ---------- */
+#toasts{position:fixed;right:14px;bottom:14px;z-index:50;display:grid;gap:8px;max-width:min(360px,calc(100vw - 28px))}
+.toast{background:var(--panel2);border:1px solid var(--line2);border-left:3px solid var(--accent);padding:9px 12px;border-radius:8px;font-size:13px;box-shadow:0 8px 24px rgba(0,0,0,.4);animation:tin .2s}
+.toast.err{border-left-color:var(--bad)}
+.toast.ok{border-left-color:var(--ok)}
+@keyframes tin{from{opacity:0;transform:translateY(6px)}}
+.empty{grid-column:1/-1;text-align:center;color:var(--mute);padding:60px 0}
+
+@media (max-width:640px){
+  .topbar{gap:8px;padding:8px 10px}
+  .brand small,.clock{display:none}
+  .light input[type=range]{width:70px}
+  .grid{padding:8px;gap:10px}
+  .btn .t{display:none}
+  .cam-title{flex:1 1 100%}
+  .cam-head .spec{margin-right:auto}
+  .btn{padding:0 9px}
+  body.solo .cam.focus .stage{height:auto;aspect-ratio:16/9}
+}
 </style>
 </head>
 <body>
-<h2>USB Camera Live</h2>
-<button id="backbtn">返回全部画面</button>
-<div class="cams" id="cams"></div>
-<script src="hls.js"></script>
+<header class="topbar">
+  <div class="brand"><i></i>CamLive <small id="camCount"></small></div>
+  <div class="spacer"></div>
+  <div class="light" id="light" hidden title="补光灯 (经主机 light_api 代理, 亮度上限 75%)">
+    <span class="lbl">💡 补光</span>
+    <label class="switch"><input type="checkbox" id="lightPower"><span></span></label>
+    <input type="range" id="lightBri" min="0" max="191" step="1">
+    <span class="val" id="lightVal">--</span>
+  </div>
+  <span class="clock" id="clock"></span>
+  <button class="btn" id="btnBack" hidden>← <span class="t">全部画面</span></button>
+  <button class="btn icon" id="btnCols" title="切换单列/多列">▦</button>
+</header>
+
+<main class="grid" id="grid"></main>
+<div id="toasts"></div>
+
+<template id="tplCam">
+  <article class="cam">
+    <div class="cam-head">
+      <div class="cam-title">
+        <span class="led"></span>
+        <h2 class="name"></h2>
+        <span class="chip rec" hidden>延时</span>
+      </div>
+      <span class="chip spec"></span>
+      <div class="cam-actions">
+        <div class="seg src" hidden><button data-src="webrtc">WebRTC</button><button data-src="hls">HLS</button></div>
+        <button class="btn icon b-set" title="设置">⚙</button>
+        <button class="btn icon b-solo" title="单画面">⤢</button>
+        <button class="btn icon b-fs" title="全屏">⛶</button>
+      </div>
+    </div>
+    <div class="stage">
+      <video muted playsinline autoplay></video>
+      <img class="mjpeg" alt="" hidden>
+      <iframe class="webrtc" allow="autoplay; fullscreen" allowfullscreen hidden></iframe>
+      <div class="ov msg"><div class="spin"></div><span class="msgtxt">连接中…</span><button class="btn pri b-wake" hidden>▶ 唤醒推流</button></div>
+      <div class="ov hud" hidden><span class="hud-l"></span><span class="hud-r"></span></div>
+      <div class="ov prog" hidden><i></i></div>
+    </div>
+    <section class="printer" hidden>
+      <div class="p-top">
+        <span class="pill"></span>
+        <span class="p-file"></span>
+        <span class="p-pct"></span>
+      </div>
+      <div class="bar"><i></i></div>
+      <div class="p-eta" hidden><span class="k"></span><span class="v"></span><span class="d"></span><span class="src"></span></div>
+      <div class="p-top">
+        <div class="p-stats"></div>
+        <div class="p-btns">
+          <button class="btn b-plight" hidden>💡 舱灯</button>
+          <button class="btn warn b-pause" hidden>⏸ 暂停</button>
+          <button class="btn pri b-resume" hidden>▶ 继续</button>
+          <button class="btn danger b-cancel" hidden>✕ 取消</button>
+        </div>
+      </div>
+    </section>
+    <section class="settings" hidden>
+      <nav class="tabs"></nav>
+      <div class="panes"></div>
+    </section>
+  </article>
+</template>
+
+<script src="vendor/hls.min.js"></script>
 <script>
-var PLAYERS = {};
-function play(id, card) {
-  var v = card.querySelector("video");
-  var e = card.querySelector(".err");
-  var src = id + ".m3u8";
-  var key = "_hls_" + id;
-  var retryTimer = null, healthTimer = null, generation = 0;
-  var lastFrameCount = 0, lastPresentedFrames = 0, lastPresented = Date.now(), hasPlayed = false;
-  function frameCount() {
-    if (typeof v.getVideoPlaybackQuality === "function") {
-      return v.getVideoPlaybackQuality().totalVideoFrames || 0;
-    }
-    return v.webkitDecodedFrameCount || 0;
-  }
-  function stopInstance() {
-    generation++;
-    if (healthTimer) { clearInterval(healthTimer); healthTimer = null; }
-    if (window[key]) { try { window[key].destroy(); } catch(x){} window[key] = null; }
-    try { v.pause(); } catch(x){}
-    v.removeAttribute("src");
-    try { v.load(); } catch(x){}
-  }
-  function markPresented() {
-    e.style.display = "none";
-    if (typeof v.requestVideoFrameCallback === "function") {
-      v.requestVideoFrameCallback(function(now, meta){
-        if (v.paused) return;
-        var presented = meta && meta.presentedFrames;
-        if (presented == null || presented > lastPresentedFrames) {
-          lastPresentedFrames = presented == null ? lastPresentedFrames + 1 : presented;
-          lastPresented = Date.now();
-        }
-        markPresented();
-      });
-    }
-  }
-  function restart(reason) {
-    if (retryTimer) return;
-    e.textContent = "视频恢复中...（" + reason + "）";
-    e.style.display = "block";
-    stopInstance();
-    retryTimer = setTimeout(function(){ retryTimer = null; start(); }, 1200);
-  }
-  function start() {
-    stopInstance();
-    var run = ++generation;
-    hasPlayed = false;
-    lastPresented = Date.now();
-    lastFrameCount = frameCount();
-    lastPresentedFrames = 0;
-    if (Hls.isSupported()) {
-      var hls = new Hls({liveSyncDurationCount: 3, maxBufferLength: 10, maxMaxBufferLength: 20, backBufferLength: 14, liveDurationInfinity: true, fragLoadingMaxRetry: 8, manifestLoadingMaxRetry: 8, levelLoadingMaxRetry: 8, fragLoadingTimeOut: 6000, enableWorker: true, lowLatencyMode: false});
-      window[key] = hls;
-      var parsed = false;
-      hls.loadSource(src + "?client=" + Date.now());
-      hls.attachMedia(v);
-      hls.on(Hls.Events.MANIFEST_PARSED, function(){
-        if (run !== generation) return;
-        parsed = true; v.play().catch(function(){}); e.style.display="none";
-      });
-      hls.on(Hls.Events.ERROR, function(ev,d){
-        if (run !== generation) return;
-        if (d.fatal) { restart("HLS错误"); }
-        else { e.style.display="none"; }
-      });
-      setTimeout(function(){ if (run === generation && !parsed) restart("加载超时"); }, 15000);
-      v.addEventListener("pause", function(){
-        if (run !== generation || v.ended) return;
-        setTimeout(function(){
-          if (run === generation && v.paused && !document.hidden) v.play().catch(function(){ restart("播放暂停"); });
-        }, 500);
-      });
-      v.addEventListener("playing", function(){
-        if (run !== generation) return;
-        hasPlayed = true;
-        lastPresented = Date.now();
-        e.style.display = "none";
-      });
-      v.addEventListener("loadeddata", function(){ if (run === generation) markPresented(); });
-      healthTimer = setInterval(function(){
-        if (run !== generation || !window[key] || !parsed || !hasPlayed || v.paused) return;
-        var currentFrames = frameCount();
-        if (currentFrames > lastFrameCount) {
-          lastFrameCount = currentFrames;
-          lastPresented = Date.now();
-        }
-        if (Date.now() - lastPresented > 6000) {
-          restart("解码帧停止");
-        }
-      }, 2000);
-      if (typeof v.requestVideoFrameCallback === "function") markPresented();
-    } else if (v.canPlayType("application/vnd.apple.mpegurl")) { v.src = src; }
-  }
-  start();
-  return {start: start, card: card, stop: stopInstance};
-}
-function post(url, body) {
-  return fetch(url, {method:"POST", headers:{"Content-Type":"application/json"},
-    body: JSON.stringify(body)}).then(r=>r.json());
+"use strict";
+/* ============================================================
+ * 工具
+ * ============================================================ */
+var $ = function (sel, root) { return (root || document).querySelector(sel); };
+var $$ = function (sel, root) { return Array.prototype.slice.call((root || document).querySelectorAll(sel)); };
+function el(tag, attrs, html) {
+  var e = document.createElement(tag);
+  if (attrs) Object.keys(attrs).forEach(function (k) {
+    if (k === "class") e.className = attrs[k]; else e.setAttribute(k, attrs[k]);
+  });
+  if (html != null) e.innerHTML = html;
+  return e;
 }
 function esc(s) {
-  return String(s).replace(/[&<>"]/g, function(c){
-    return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c];
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
   });
 }
-function buildCard(cam) {
-  var d = document.createElement("div");
-  d.className = "cam";
-  d.id = "cam_" + cam.id;
-  d.innerHTML =
-    '<h3><span>' + esc(cam.name) + '</span><span class="btns">' +
-      '<button class="btnwake" style="display:none" title="唤醒推流">&#9654; 唤醒</button>' +
-      '<button class="btnsets" title="展开/收起设置(防误触)">&#9881; 设置</button>' +
-      '<button class="btnsolo" title="只看此画面">单画面</button>' +
-      '<button class="btnfs" title="网页全屏">&#10530; 全屏</button>' +
-      '<span class="st">--</span></span></h3>' +
-    '<div class="cfgrow" style="display:none">' +
-      '<label>模式 <select class="selmode">' +
-        '<option value="h264">H.264 流畅</option>' +
-        '<option value="mjpeg">MJPEG 实时</option></select></label>' +
-      '<label>分辨率 <select class="selres"></select></label>' +
-      '<label>帧率 <select class="selfps"></select></label>' +
-      '<label>码率 <select class="selbr">' +
-        '<option value="1M">1 Mbps</option><option value="2M">2 Mbps</option>' +
-        '<option value="4M" selected>4 Mbps</option><option value="8M">8 Mbps</option>' +
-        '<option value="12M">12 Mbps</option></select></label>' +
-      '<button class="btnapply">应用</button></div>' +
-    '<div class="ptzrow" style="display:none">' +
-      '<span style="color:#999;font-size:12px">云台</span>' +
-      '<button class="p0" data-p="0" data-t="20000">&#9650;</button>' +
-      '<button class="p-20000" data-p="-20000" data-t="0">&#9664;</button>' +
-      '<button class="pcenter">&#9678;</button>' +
-      '<button class="p20000" data-p="20000" data-t="0">&#9654;</button>' +
-      '<button class="p-0" data-p="0" data-t="-20000">&#9660;</button>' +
-      '<label>变焦 <input type="range" class="zrange" min="100" max="400" step="10" value="100" style="width:110px;vertical-align:middle"> <span class="zv">1.0x</span></label>' +
-      '<span class="st">--</span></div>' +
-    '<div class="ctrlrow"></div>' +
-    '<div class="vtime"></div>' +
-    '<div class="err">视频加载中...（若长时间无画面请检查摄像头）</div>' +
-    '<video autoplay muted playsinline controls></video>' +
-    (cam.webrtc ? '<iframe class="webrtc" allow="autoplay; fullscreen" allowfullscreen style="display:none"></iframe>' : '') +
-    '<img class="preview" style="display:none;width:100%;max-height:76vh;background:#000;border-radius:6px"></img>' +
-    '<div class="printer"><div class="pline"><span class="pst"></span><span class="pname"></span><span class="pp"></span><button class="pcmd pause">暂停</button><button class="pcmd resume" style="display:none">继续</button></div><div class="pbar"><i></i></div></div>';
-  document.getElementById("cams").appendChild(d);
-  return d;
+function api(path, body) {
+  var opt = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)};
+  return fetch(path, opt).then(function (r) {
+    return r.json().catch(function () { return {}; }).then(function (d) {
+      if (!r.ok || d.error) { var e = new Error(d.error || d.last_error || ("HTTP " + r.status)); e.data = d; throw e; }
+      return d;
+    });
+  });
 }
-var GROUPS = [
-  {key:"focus", title:"对焦", auto:"focus_automatic_continuous", items:["focus_absolute"]},
-  {key:"wb", title:"白平衡", auto:"white_balance_automatic", items:["white_balance_temperature"]},
-  {key:"exposure", title:"曝光", auto:"auto_exposure", items:["exposure_time_absolute"]},
-  {key:"image", title:"图像", items:["brightness","contrast","saturation","hue","sharpness"]},
-];
-function buildControls(id, card, data) {
-  var row = card.querySelector(".ctrlrow");
-  row.innerHTML = "";
-  GROUPS.forEach(function(g){
-    var names = g.items.filter(function(n){ return data.controls[n]; });
-    var auto = g.auto ? data.controls[g.auto] : null;
-    if (!names.length && !auto) return;
-    var grp = document.createElement("div");
-    grp.className = "grp";
-    grp.innerHTML = '<span class="gt">' + esc(g.title) + '</span>';
-    if (auto) {
-      var cb = document.createElement("label");
-      cb.innerHTML = '<input type="checkbox" class="auto"> ' + esc(g.auto);
-      cb.querySelector("input").checked = auto.value == 1;
-      cb.querySelector("input").onchange = function(){
-        post("api/cam/" + id + "/control", {ctrl: g.auto, value: this.checked ? 1 : 0});
-        names.forEach(function(n){
-          var sl = grp.querySelector('input[data-ctrl="' + n + '"]');
-          if (sl) sl.disabled = this.checked;
-        }, this);
-      };
-      grp.appendChild(cb);
+function toast(msg, kind) {
+  var t = el("div", {class: "toast " + (kind || "")}, esc(msg));
+  $("#toasts").appendChild(t);
+  setTimeout(function () { t.remove(); }, kind === "err" ? 6000 : 3000);
+}
+function store(k, v) {
+  try { if (v === undefined) return localStorage.getItem("camlive." + k); localStorage.setItem("camlive." + k, v); } catch (e) { return null; }
+}
+function fmtDur(sec) {
+  if (sec == null || sec < 0) return "-";
+  sec = Math.round(sec);
+  var h = Math.floor(sec / 3600), m = Math.floor(sec % 3600 / 60);
+  return h ? h + "h" + (m < 10 ? "0" : "") + m + "m" : m + "m";
+}
+function fmtHM(ts) {
+  var d = new Date(ts * 1000);
+  return ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+}
+/* 相对日期: 今天 / 明天 / 昨天 / 11月7日 */
+function fmtDay(ts) {
+  var d = new Date(ts * 1000), t = new Date();
+  t.setHours(0, 0, 0, 0);
+  var diff = Math.round((new Date(d.getFullYear(), d.getMonth(), d.getDate()) - t) / 86400000);
+  return {"-1": "昨天", "0": "今天", "1": "明天", "2": "后天"}[diff] || (d.getMonth() + 1) + "月" + d.getDate() + "日";
+}
+function fmtClock(ts) { return fmtDay(ts) + " " + fmtHM(ts); }
+var ETA_SRC = {mixed: "依据: 切片预估 + 实际进度", file: "依据: 实际进度外推", slicer: "依据: 切片软件预估", klipper: "依据: Klipper 估算"};
+function fmtT(v) { return v == null ? "-" : Math.round(v); }
+function debounce(fn, ms) {
+  var t; return function () { var a = arguments, s = this; clearTimeout(t); t = setTimeout(function () { fn.apply(s, a); }, ms); };
+}
+/* 本地没有 hls.js 时回退到 CDN */
+/* hls.js: 仓库内置 vendor/hls.min.js -> 旧版 /hls.js -> CDN */
+function loadScript(src) {
+  return new Promise(function (ok) {
+    var s = document.createElement("script");
+    s.src = src;
+    s.onload = s.onerror = function () { ok(); };
+    document.head.appendChild(s);
+  });
+}
+function ensureHls() {
+  if (window.Hls) return Promise.resolve();
+  return loadScript("hls.js").then(function () {
+    if (!window.Hls) return loadScript("https://cdn.jsdelivr.net/npm/hls.js@1.5.20/dist/hls.min.js");
+  });
+}
+
+var PSTATE = {printing: "打印中", paused: "已暂停", complete: "已完成", standby: "待机", error: "错误",
+  cancelled: "已取消", cancel: "已取消", starting: "启动中", unknown: "未知"};
+
+/* ============================================================
+ * HLS 播放器: 带卡死检测与自动恢复
+ * ============================================================ */
+function HlsPlayer(video, src, onState) {
+  var hls = null, gen = 0, retryTimer = null, healthTimer = null, loadTimer = null;
+  var lastFrames = 0, lastProgress = 0, played = false, active = false;
+
+  function frames() {
+    if (video.getVideoPlaybackQuality) return video.getVideoPlaybackQuality().totalVideoFrames || 0;
+    return video.webkitDecodedFrameCount || 0;
+  }
+  function teardown() {
+    gen++;
+    clearInterval(healthTimer); healthTimer = null;
+    clearTimeout(loadTimer); loadTimer = null;
+    if (hls) { try { hls.destroy(); } catch (e) {} hls = null; }
+    try { video.pause(); } catch (e) {}
+    video.removeAttribute("src");
+    try { video.load(); } catch (e) {}
+  }
+  function restart(reason) {
+    if (!active || retryTimer) return;
+    onState("recover", reason);
+    teardown();
+    retryTimer = setTimeout(function () { retryTimer = null; start(); }, 1500);
+  }
+  function start() {
+    if (!active) return;
+    teardown();
+    var run = gen;
+    played = false; lastFrames = frames(); lastProgress = Date.now();
+    onState("loading");
+    if (window.Hls && Hls.isSupported()) {
+      hls = new Hls({liveSyncDurationCount: 3, maxBufferLength: 10, maxMaxBufferLength: 20, backBufferLength: 14,
+        liveDurationInfinity: true, fragLoadingMaxRetry: 8, manifestLoadingMaxRetry: 8, levelLoadingMaxRetry: 8,
+        fragLoadingTimeOut: 6000, enableWorker: true, lowLatencyMode: false});
+      var parsed = false;
+      hls.on(Hls.Events.MANIFEST_PARSED, function () {
+        if (run !== gen) return;
+        parsed = true;
+        video.play().catch(function () {});
+      });
+      hls.on(Hls.Events.ERROR, function (ev, d) {
+        if (run === gen && d.fatal) restart("HLS 错误: " + (d.details || d.type));
+      });
+      hls.loadSource(src + "?client=" + Date.now());
+      hls.attachMedia(video);
+      loadTimer = setTimeout(function () { if (run === gen && !parsed) restart("加载超时"); }, 15000);
+      healthTimer = setInterval(function () {
+        if (run !== gen || !played || video.paused) return;
+        var f = frames();
+        if (f > lastFrames) { lastFrames = f; lastProgress = Date.now(); }
+        if (Date.now() - lastProgress > 6000) restart("画面停止");
+      }, 2000);
+    } else if (video.canPlayType("application/vnd.apple.mpegurl")) {
+      video.src = src;  /* Safari 原生 HLS */
+      video.play().catch(function () {});
+    } else {
+      onState("error", "浏览器不支持 HLS");
     }
-    names.forEach(function(n){
-      var c = data.controls[n];
-      var lab = document.createElement("label");
-      lab.innerHTML = esc(n) + ' <input type="range" data-ctrl="' + esc(n) + '" min="' + c.min +
-        '" max="' + c.max + '" step="' + (c.step||1) + '" value="' + c.value + '">' +
-        '<span class="v">' + c.value + '</span>';
-      var sl = lab.querySelector("input");
-      if (auto && auto.value == 1) sl.disabled = true;
-      sl.oninput = function(){ lab.querySelector(".v").textContent = this.value; };
-      sl.onchange = function(){ post("api/cam/" + id + "/control", {ctrl: n, value: parseInt(this.value)}); };
-      grp.appendChild(lab);
-    }, this);
-    row.appendChild(grp);
+  }
+  /* 事件只绑定一次, 用 gen 判断是否属于当前实例 */
+  video.addEventListener("playing", function () {
+    if (!active) return;
+    played = true; lastProgress = Date.now(); onState("playing");
   });
-  if (!row.children.length) row.style.display = "none";
-}
-function showMjpeg(id, card) {
-  card.querySelector("video").style.display = "none";
-  var img = card.querySelector(".preview");
-  img.style.display = "block";
-  img.src = "preview/" + id + "/stream?t=" + Date.now();
-  img.onerror = function(){ var self = this; setTimeout(function(){ self.src = "preview/" + id + "/stream?t=" + Date.now(); }, 2000); };
-}
-function showH264(id, card) {
-  var img = card.querySelector(".preview");
-  img.style.display = "none";
-  img.onerror = null;
-  card.querySelector("video").style.display = "block";
-}
-function showWebrtc(id, card) {
-  var v = card.querySelector("video"), frame = card.querySelector("iframe.webrtc");
-  if (!frame) return false;
-  v.style.display = "none";
-  frame.src = "http://" + location.hostname + ":8889/" + encodeURIComponent(id) + "/";
-  frame.style.display = "block";
-  return true;
-}
-function buildConfig(id, card, data) {
-  if (!data.formats || !data.formats.length) return;
-  var row = card.querySelector(".cfgrow");
-  row.style.display = "flex";
-  row.querySelector(".selmode").value = data.mode || "h264";
-  row.querySelector(".selmode").onchange = function(){
-    var mode = this.value, btn = this;
-    btn.disabled = true;
-    post("api/cam/" + id + "/mode", {mode: mode}).then(function(d){
-      if (d.ok) {
-        if (mode === "mjpeg") { showMjpeg(id, card); card.querySelector(".err").style.display = "none"; }
-        else {
-          showH264(id, card);
-          setTimeout(function(){ PLAYERS[id].start(); }, 3000);
-        }
-      } else alert("切换失败: " + (d.error||"未知"));
-    }).catch(function(e){ alert("请求失败: " + e); })
-    .finally(function(){ btn.disabled = false; });
+  video.addEventListener("pause", function () {
+    if (!active || !played || video.ended) return;
+    var run = gen;
+    setTimeout(function () {
+      if (run === gen && active && video.paused && !document.hidden)
+        video.play().catch(function () { restart("播放暂停"); });
+    }, 500);
+  });
+  return {
+    start: function () { active = true; clearTimeout(retryTimer); retryTimer = null; start(); },
+    stop: function () { active = false; clearTimeout(retryTimer); retryTimer = null; teardown(); },
+    kick: function () { if (active && (video.paused || !played)) start(); },
+    get active() { return active; }
   };
-  var resSel = row.querySelector(".selres"), fpsSel = row.querySelector(".selfps");
-  var curW = data.width, curH = data.height, curFps = data.fps;
-  var ress = [], seen = {};
-  data.formats.forEach(function(f){
-    var k = f.width + "x" + f.height;
-    if (!seen[k]) { seen[k] = true; ress.push({w:f.width, h:f.height, label:k}); }
-  });
-  resSel.innerHTML = "";
-  ress.forEach(function(r){
-    var o = document.createElement("option");
-    o.value = r.w + "x" + r.h;
-    o.textContent = r.label;
-    if (r.w == curW && r.h == curH) o.selected = true;
-    resSel.appendChild(o);
-  });
-  function fillFps(){
-    var r = resSel.value.split("x");
-    var f = data.formats.filter(function(x){ return x.width==+r[0] && x.height==+r[1]; });
-    fpsSel.innerHTML = "";
-    f.forEach(function(x){
-      var o = document.createElement("option");
-      o.value = x.fps; o.textContent = x.fps + " fps";
-      if (x.fps == curFps) o.selected = true;
-      fpsSel.appendChild(o);
+}
+
+/* ============================================================
+ * 摄像头卡片
+ * ============================================================ */
+var CAMS = {};
+
+function Camera(info) {
+  var self = this;
+  this.id = info.id;
+  this.info = info;
+  this.detail = null;
+  this.view = null;       /* 当前显示方式: webrtc | hls | mjpeg */
+  var root = this.root = document.importNode($("#tplCam").content, true).firstElementChild;
+  root.id = "cam_" + info.id;
+  this.q = function (s) { return $(s, root); };
+  this.video = this.q("video");
+  this.img = this.q("img.mjpeg");
+  this.frame = this.q("iframe.webrtc");
+  this.player = HlsPlayer(this.video, encodeURIComponent(info.id) + ".m3u8", function (st, why) { self.onPlayer(st, why); });
+
+  this.q(".name").textContent = info.name;
+  this.q(".name").title = info.name + " · " + info.device;
+  this.setAspect(info.width, info.height);
+
+  /* 源切换: 仅 WebRTC 摄像头 */
+  if (info.webrtc) {
+    this.q(".src").hidden = false;
+    $$(".src button", root).forEach(function (b) {
+      b.onclick = function () { store("src." + self.id, b.dataset.src); self.applyView(); };
     });
   }
-  resSel.onchange = fillFps;
-  fillFps();
-  row.querySelector(".btnapply").onclick = function(){
-    var btn = this; btn.disabled = true;
-    var r = resSel.value.split("x");
-    post("api/cam/" + id + "/config", {width:+r[0], height:+r[1],
-      fps:parseInt(fpsSel.value), bitrate:row.querySelector(".selbr").value})
-    .then(function(d){
-      if (d.ok) {
-        var st = card.querySelector(".st");
-        st.textContent = d.width + "x" + d.height + " @" + d.fps + "fps " + d.bitrate;
-        setTimeout(function(){ PLAYERS[id].start(); refreshCam(id); }, 4000);
-      } else alert("切换失败: " + (d.error||"未知"));
-    }).catch(function(e){ alert("请求失败: " + e); })
-    .finally(function(){ btn.disabled = false; });
+  this.q(".b-set").onclick = function () { self.toggleSettings(); };
+  this.q(".b-solo").onclick = function () { App.solo(self.id); };
+  this.q(".b-fs").onclick = function () { self.fullscreen(); };
+  this.q(".stage").ondblclick = function () { self.fullscreen(); };
+  this.q(".b-wake").onclick = function () { self.wake(true); };
+
+  this.img.onerror = function () {
+    if (self.view !== "mjpeg") return;
+    self.showMsg("MJPEG 重连中…", true);
+    clearTimeout(self._imgRetry);
+    self._imgRetry = setTimeout(function () { if (self.view === "mjpeg") self.img.src = self.mjpegUrl(); }, 2000);
   };
+  this.img.onload = function () { if (self.view === "mjpeg") self.hideMsg(); };
+  this.frame.onload = function () { if (self.view === "webrtc") self.hideMsg(); };
+
+  /* 打印机按钮 */
+  this.q(".b-plight").onclick = function () { self.setPrinterLight(self.printerLightOn !== true); };
+  this.q(".b-pause").onclick = function () { self.printerCmd("pause", "已发送暂停"); };
+  this.q(".b-resume").onclick = function () { self.printerCmd("resume", "已发送继续"); };
+  var cancelBtn = this.q(".b-cancel");
+  cancelBtn.onclick = function () {
+    if (!cancelBtn.classList.contains("armed")) {
+      cancelBtn.classList.add("armed"); cancelBtn.textContent = "再点确认取消";
+      clearTimeout(cancelBtn._t);
+      cancelBtn._t = setTimeout(function () { cancelBtn.classList.remove("armed"); cancelBtn.textContent = "✕ 取消"; }, 3000);
+      return;
+    }
+    cancelBtn.classList.remove("armed"); cancelBtn.textContent = "✕ 取消";
+    self.printerCmd("cancel", "已发送取消打印");
+  };
+
+  this.updateStatus(info);
 }
-function buildPtz(id, card, data) {
-  var row = card.querySelector(".ptzrow");
-  row.style.display = "flex";
-  if (!data.ptz) {
-    row.querySelectorAll("button, .zrange").forEach(function(b){ b.disabled = true; });
-    var st = row.querySelector(".st");
-    st.textContent = "此摄像头不支持云台";
-    st.style.color = "#f66";
-    return;
+
+Camera.prototype.setAspect = function (w, h) {
+  if (w > 0 && h > 0) this.q(".stage").style.aspectRatio = w + " / " + h;
+};
+Camera.prototype.mjpegUrl = function () { return "preview/" + encodeURIComponent(this.id) + "/stream?t=" + Date.now(); };
+Camera.prototype.showMsg = function (txt, spin, wake) {
+  var m = this.q(".ov.msg");
+  m.hidden = false;
+  this.q(".msgtxt").textContent = txt;
+  this.q(".spin").hidden = !spin;
+  this.q(".b-wake").hidden = !wake;
+};
+Camera.prototype.hideMsg = function () { this.q(".ov.msg").hidden = true; };
+
+Camera.prototype.wantedView = function () {
+  if ((this.info.mode || "h264") === "mjpeg") return "mjpeg";
+  if (this.info.webrtc) return store("src." + this.id) === "hls" ? "hls" : "webrtc";
+  return "hls";
+};
+Camera.prototype.applyView = function (force) {
+  if (this.suspended) return;
+  var v = this.wantedView();
+  $$(".src button", this.root).forEach(function (b) { b.classList.toggle("on", b.dataset.src === v); });
+  this.q(".src").hidden = !this.info.webrtc || v === "mjpeg";
+  if (v === this.view && !force) return;
+  this.view = v;
+  /* 先全部停掉 */
+  this.player.stop();
+  this.video.hidden = v !== "hls";
+  this.img.hidden = v !== "mjpeg";
+  this.frame.hidden = v !== "webrtc";
+  if (v !== "mjpeg") this.img.removeAttribute("src");
+  if (v !== "webrtc") this.frame.removeAttribute("src");
+  if (this.info.sleeping) { this.showMsg("推流休眠中（" + (this.info.sleep_reason || "无观众") + "）", false, true); return; }
+  this.showMsg("连接中…", true);
+  if (v === "hls") this.player.start();
+  else if (v === "mjpeg") {
+    /* multipart 图片的 onload 在部分浏览器不触发, 轮询 naturalWidth 判断首帧 */
+    var self = this, n = 0;
+    this.img.src = this.mjpegUrl();
+    clearInterval(this._imgPoll);
+    this._imgPoll = setInterval(function () {
+      if (self.view !== "mjpeg" || ++n > 40) return clearInterval(self._imgPoll);
+      if (self.img.naturalWidth) { self.hideMsg(); clearInterval(self._imgPoll); }
+    }, 500);
   }
-  var pan = data.ptz.pan_absolute, tilt = data.ptz.tilt_absolute;
-  row.querySelectorAll("button[data-p]").forEach(function(b){
-    b.onclick = function(){
-      var cur = window["_ptz_" + id] || data.ptz;
-      post("api/cam/" + id + "/ptz", {pan: cur.pan_absolute + parseInt(b.dataset.p),
-        tilt: cur.tilt_absolute + parseInt(b.dataset.t)});
+  else {
+    var u = (App.info.webrtc_url || "http://{host}:8889/{id}/")
+      .replace("{host}", location.hostname).replace("{id}", encodeURIComponent(this.id));
+    this.frame.src = u + (u.indexOf("?") < 0 ? "?" : "&") + "controls=false&muted=true&autoplay=true&playsinline=true";
+  }
+};
+Camera.prototype.onPlayer = function (st, why) {
+  if (this.view !== "hls") return;
+  if (st === "playing") this.hideMsg();
+  else if (st === "loading") { if (!this.q(".ov.msg").hidden) this.showMsg("连接中…", true); }
+  else if (st === "recover") this.showMsg("恢复中…（" + why + "）", true);
+  else if (st === "error") this.showMsg(why, false);
+};
+
+Camera.prototype.updateStatus = function (d) {
+  var wasSleeping = this.info.sleeping, oldMode = this.info.mode;
+  this.info = Object.assign(this.info, d);
+  var led = this.q(".led"), spec = this.q(".spec");
+  led.className = "led " + (d.sleeping ? "sleep" : d.online ? "ok" : "bad");
+  led.title = d.sleeping ? "休眠" : d.online ? "在线" : "离线";
+  if (d.name) this.q(".name").textContent = d.name;
+  spec.textContent = (d.mode === "mjpeg" ? "MJPEG " : "") + d.width + "×" + d.height + " · " + d.fps + "fps" +
+    (d.mode === "mjpeg" ? "" : " · " + d.bitrate);
+  this.q(".chip.rec").hidden = !d.timelapse;
+  this.setAspect(d.width, d.height);
+  if (wasSleeping !== d.sleeping || oldMode !== d.mode || !this.view) this.applyView(true);
+};
+
+Camera.prototype.wake = function (manual) {
+  var self = this;
+  return api("api/cam/" + encodeURIComponent(this.id) + "/wake", {}).then(function (r) {
+    if (manual) toast("已唤醒 " + self.info.name, "ok");
+    if (r.restarted || self.info.sleeping) {
+      self.info.sleeping = false;
+      setTimeout(function () { self.applyView(true); }, r.restarted ? 2500 : 0);
+    }
+  }).catch(function (e) { if (manual) toast("唤醒失败: " + e.message, "err"); });
+};
+
+Camera.prototype.fullscreen = function () {
+  if (document.fullscreenElement) return document.exitFullscreen();
+  var r = this.root;
+  (r.requestFullscreen || r.webkitRequestFullscreen || function () {
+    /* iOS 不支持元素全屏: 退化为视频全屏 */
+    if (this.video.webkitEnterFullscreen) this.video.webkitEnterFullscreen();
+  }.bind(this)).call(r);
+};
+
+/* ---------- 打印机 ---------- */
+Camera.prototype.refreshPrinter = function () {
+  if (!this.info.printer) return;
+  var self = this, sec = this.q(".printer");
+  api("api/printer/" + encodeURIComponent(this.id)).then(function (d) {
+    sec.hidden = false;
+    var st = d.state || "unknown", active = st === "printing" || st === "paused";
+    var pill = self.q(".pill");
+    pill.textContent = PSTATE[st] || st;
+    pill.className = "pill " + st;
+    self.q(".p-file").textContent = d.filename || (active ? "" : "—");
+    self.q(".p-file").title = d.filename || "";
+    var pct = st === "complete" ? 100 : d.progress != null ? d.progress * 100 : null;
+    self.q(".p-pct").textContent = pct != null && (active || st === "complete") ? pct.toFixed(1) + "%" : "";
+    self.q(".bar i").style.width = (pct || 0) + "%";
+    self.q(".bar").hidden = !active && st !== "complete";
+
+    var stats = [];
+    if (d.total_layer) stats.push("层 <b>" + (d.layer || 0) + "/" + d.total_layer + "</b>");
+    if (active && d.print_duration) stats.push("已用 <b>" + fmtDur(d.print_duration) + "</b>");
+    if (active && d.slicer_total) stats.push("切片预估 <b>" + fmtDur(d.slicer_total) + "</b>");
+    /* 用服务器算出的剩余秒数 + 浏览器本地时钟, 避免两边时钟不一致 */
+    var remain = active && d.remaining != null ? d.remaining : null;
+    var eta = remain != null ? Date.now() / 1000 + remain : null;
+    var box = self.q(".p-eta");
+    box.className = "p-eta" + (st === "paused" ? " paused" : "") + (st === "complete" ? " done" : "");
+    box.hidden = false;
+    if (st === "printing" && eta) {
+      self.setEta("预计完成", fmtHM(eta), fmtDay(eta) + " · 还剩 " + fmtDur(remain), ETA_SRC[d.eta_source]);
+    } else if (st === "paused" && remain != null) {
+      self.setEta("已暂停", "还需 " + fmtDur(remain), "现在继续约 " + fmtClock(eta) + " 完成", ETA_SRC[d.eta_source]);
+    } else if (active) {
+      self.setEta("预计完成", "计算中…", "进度数据不足", "");
+    } else if (d.finished_at && (st === "complete" || st === "cancelled" || st === "error")) {
+      self.setEta(st === "complete" ? "完成于" : st === "error" ? "出错于" : "取消于", fmtHM(d.finished_at),
+        fmtDay(d.finished_at) + (d.finished_duration ? " · 用时 " + fmtDur(d.finished_duration) : ""), "");
+    } else {
+      box.hidden = true;
+    }
+    if (d.ext_temp != null) stats.push("喷头 <b>" + fmtT(d.ext_temp) + "/" + fmtT(d.ext_target) + "°</b>");
+    if (d.bed_temp != null) stats.push("热床 <b>" + fmtT(d.bed_temp) + "/" + fmtT(d.bed_target) + "°</b>");
+    self.q(".p-stats").innerHTML = stats.map(function (s) { return "<span>" + s + "</span>"; }).join("");
+
+    self.q(".b-pause").hidden = st !== "printing";
+    self.q(".b-resume").hidden = st !== "paused";
+    self.q(".b-cancel").hidden = !active;
+    self.q(".b-plight").hidden = !self.info.printer_light;
+    if (self.info.printer_light) self.refreshPrinterLight();
+
+    /* 画面 HUD */
+    var hud = self.q(".ov.hud"), prog = self.q(".ov.prog");
+    hud.hidden = prog.hidden = !active;
+    if (active) {
+      self.q(".hud-l").textContent = (PSTATE[st] || st) + (pct != null ? " " + pct.toFixed(0) + "%" : "") +
+        (d.total_layer ? " · " + (d.layer || 0) + "/" + d.total_layer : "");
+      self.q(".hud-r").textContent = eta && st === "printing" ? fmtHM(eta) + " 完成 · 剩 " + fmtDur(remain)
+        : remain != null ? "暂停 · 还需 " + fmtDur(remain) : "";
+      self.q(".hud-r").hidden = remain == null;
+      prog.querySelector("i").style.width = (pct || 0) + "%";
+    }
+  }).catch(function () {
+    sec.hidden = true;
+    self.q(".ov.hud").hidden = self.q(".ov.prog").hidden = true;
+  });
+};
+Camera.prototype.refreshPrinterLight = function () {
+  var self = this, btn = this.q(".b-plight");
+  api("api/printer/" + encodeURIComponent(this.id) + "/light").then(function (d) {
+    self.printerLightOn = d.on === true ? true : d.on === false ? false : null;
+    btn.classList.toggle("on", self.printerLightOn === true);
+    btn.textContent = self.printerLightOn === true ? "💡 舱灯开" : self.printerLightOn === false ? "💡 舱灯关" : "💡 舱灯";
+    btn.title = self.printerLightOn == null ? "状态未知；点击开灯" : "点击" + (self.printerLightOn ? "关灯" : "开灯");
+  }).catch(function (e) {
+    self.printerLightOn = null;
+    btn.classList.remove("on"); btn.textContent = "💡 舱灯"; btn.title = e.message;
+  });
+};
+Camera.prototype.setPrinterLight = function (on) {
+  var self = this, btn = this.q(".b-plight");
+  btn.disabled = true;
+  api("api/printer/" + encodeURIComponent(this.id) + "/light", {on: on})
+    .then(function (d) {
+      self.printerLightOn = d.on === true;
+      btn.classList.toggle("on", self.printerLightOn);
+      btn.textContent = self.printerLightOn ? "💡 舱灯开" : "💡 舱灯关";
+      btn.title = "点击" + (self.printerLightOn ? "关灯" : "开灯");
+      toast("ARCO 舱内灯已" + (self.printerLightOn ? "开启" : "关闭"), "ok");
+    }).catch(function (e) { toast("ARCO 舱内灯: " + e.message, "err"); })
+    .finally(function () { btn.disabled = false; });
+};
+Camera.prototype.setEta = function (k, v, d, src) {
+  var b = this.q(".p-eta");
+  $(".k", b).textContent = k; $(".v", b).textContent = v; $(".d", b).textContent = d; $(".src", b).textContent = src || "";
+};
+Camera.prototype.printerCmd = function (cmd, okMsg) {
+  var self = this;
+  $$(".p-btns .btn", this.root).forEach(function (b) { b.disabled = true; });
+  api("api/printer/" + encodeURIComponent(this.id) + "/cmd", {cmd: cmd})
+    .then(function () { toast(okMsg, "ok"); setTimeout(function () { self.refreshPrinter(); }, 1000); })
+    .catch(function (e) { toast("操作失败: " + e.message, "err"); })
+    .finally(function () { $$(".p-btns .btn", self.root).forEach(function (b) { b.disabled = false; }); });
+};
+
+/* ---------- 设置面板 ---------- */
+Camera.prototype.toggleSettings = function () {
+  var sec = this.q(".settings"), btn = this.q(".b-set"), self = this;
+  if (!sec.hidden) { sec.hidden = true; btn.classList.remove("on"); return; }
+  btn.classList.add("on");
+  sec.hidden = false;
+  this.q(".panes").innerHTML = '<div class="pane note">读取摄像头参数…</div>';
+  this.q(".tabs").innerHTML = "";
+  api("api/cam/" + encodeURIComponent(this.id)).then(function (d) {
+    self.detail = d;
+    self.buildSettings(d);
+  }).catch(function (e) {
+    self.q(".panes").innerHTML = '<div class="pane note">读取失败: ' + esc(e.message) + "</div>";
+  });
+};
+Camera.prototype.buildSettings = function (d) {
+  var self = this, tabs = this.q(".tabs"), panes = this.q(".panes");
+  tabs.innerHTML = ""; panes.innerHTML = "";
+  var list = [["推流", this.paneStream(d)]];
+  if (d.ptz) list.push(["云台", this.panePtz(d)]);
+  var img = this.paneImage(d);
+  if (img) list.push(["画面", img]);
+  var last = store("tab." + this.id);
+  list.forEach(function (t, i) {
+    var b = el("button", null, esc(t[0]));
+    t[1].hidden = true;
+    b.onclick = function () {
+      $$("button", tabs).forEach(function (x) { x.classList.remove("on"); });
+      $$(".pane", panes).forEach(function (x) { x.hidden = true; });
+      b.classList.add("on"); t[1].hidden = false;
+      store("tab." + self.id, t[0]);
     };
+    tabs.appendChild(b); panes.appendChild(t[1]);
+    if (t[0] === last || (i === 0 && !list.some(function (x) { return x[0] === last; }))) b.click();
   });
-  row.querySelector(".pcenter").onclick = function(){ post("api/cam/" + id + "/ptz", {pan:0, tilt:0}); };
-  var z = row.querySelector(".zrange");
-  z.min = data.controls.zoom_absolute ? data.controls.zoom_absolute.min : 100;
-  z.max = data.controls.zoom_absolute ? data.controls.zoom_absolute.max : 400;
-  z.value = data.ptz.zoom_absolute;
-  z.oninput = function(){ row.querySelector(".zv").textContent = (this.value/100).toFixed(1) + "x"; };
-  z.onchange = function(){ post("api/cam/" + id + "/ptz", {zoom: parseInt(this.value)}); };
-  row.querySelector(".st").textContent = "pan:" + pan + " tilt:" + tilt;
-  window["_ptz_" + id] = data.ptz;
-}
-function setStatus(card, d) {
-  var st = card.querySelector(".st");
-  var wake = card.querySelector(".btnwake");
-  if (d.sleeping) {
-    st.className = "st off";
-    st.textContent = "休眠中(" + (d.sleep_reason || "无观众") + ")";
-    if (wake) wake.style.display = "inline-block";
-  } else {
-    st.className = "st" + (d.online ? "" : " off");
-    st.textContent = (d.online ? "" : "离线 ") + d.width + "x" + d.height + " @" + d.fps + "fps " + d.bitrate;
-    if (wake) wake.style.display = "none";
+};
+Camera.prototype.paneStream = function (d) {
+  var self = this, pane = el("div", {class: "pane"});
+  var form = el("div", {class: "form"});
+  form.innerHTML =
+    '<label>模式<select class="f-mode"><option value="h264">H.264 (HLS/WebRTC)</option><option value="mjpeg">MJPEG 低延迟</option></select></label>';
+  pane.appendChild(form);
+  var mode = $(".f-mode", form);
+  mode.value = d.mode || "h264";
+  mode.onchange = function () {
+    mode.disabled = true;
+    api("api/cam/" + encodeURIComponent(self.id) + "/mode", {mode: mode.value}).then(function () {
+      toast("已切换为 " + (mode.value === "mjpeg" ? "MJPEG" : "H.264"), "ok");
+      self.info.mode = mode.value;
+      self.showMsg("切换中…", true);
+      setTimeout(function () { self.applyView(true); App.refreshStatus(); }, mode.value === "mjpeg" ? 1000 : 3500);
+    }).catch(function (e) { toast("切换失败: " + e.message, "err"); mode.value = self.info.mode; })
+      .finally(function () { mode.disabled = false; });
+  };
+
+  if (!d.formats || !d.formats.length) {
+    pane.appendChild(el("div", {class: "note"}, "该摄像头不支持在线调整分辨率/帧率（网络源或未枚举到 MJPG 格式）。"));
+    return pane;
   }
-}
-function soloMode(card) {
-  document.querySelectorAll(".cam").forEach(function(c){ c.classList.remove("show"); });
-  document.body.classList.add("single");
-  card.classList.add("show");
-  document.getElementById("backbtn").style.display = "block";
-}
-function exitSolo() {
-  document.body.classList.remove("single");
-  document.querySelectorAll(".cam").forEach(function(c){ c.classList.remove("show"); });
-  document.getElementById("backbtn").style.display = "none";
-}
-document.getElementById("backbtn").onclick = exitSolo;
-document.addEventListener("fullscreenchange", function(){
-  if (!document.fullscreenElement && document.body.classList.contains("single")) exitSolo();
-});
-// 浏览器后台标签页会挂起静音视频: 页面回到前台/窗口聚焦时自动恢复
-function resumeAll() {
-  Object.keys(PLAYERS).forEach(function(id){
-    var p = PLAYERS[id];
-    if (!p || !p.card) return;
-    var v = p.card.querySelector("video");
-    if (!v) return;
-    if (v.paused) {
-      p.start();
-      refreshCam(id);
-    }
+  form.insertAdjacentHTML("beforeend",
+    '<label>分辨率<select class="f-res"></select></label>' +
+    '<label>帧率<select class="f-fps"></select></label>' +
+    '<label>码率<select class="f-br"></select></label>');
+  var foot = el("div", {class: "form-foot"},
+    '<button class="btn pri f-apply">应用并重启推流</button><span class="note">应用后会短暂断流（约 5 秒）。设备: ' + esc(d.device) + "</span>");
+  pane.appendChild(foot);
+  var res = $(".f-res", form), fps = $(".f-fps", form), br = $(".f-br", form);
+  var seen = {};
+  d.formats.slice().sort(function (a, b) { return b.width * b.height - a.width * a.height; }).forEach(function (f) {
+    var k = f.width + "x" + f.height;
+    if (seen[k]) return; seen[k] = 1;
+    var o = el("option", {value: k}, f.width + " × " + f.height);
+    if (f.width == d.width && f.height == d.height) o.selected = true;
+    res.appendChild(o);
   });
-}
-document.addEventListener("visibilitychange", function(){
-  if (!document.hidden) resumeAll();
-});
-window.addEventListener("focus", function(){ resumeAll(); });
-var PSTATE = {printing:"打印中", paused:"已暂停", complete:"已完成", standby:"待机", error:"错误", cancel:"已取消", starting:"启动中"};
-function toggleCfg(card) {
-  var rows = [card.querySelector(".cfgrow"), card.querySelector(".ptzrow"), card.querySelector(".ctrlrow")];
-  var show = card.dataset.cfg !== "1";
-  card.dataset.cfg = show ? "1" : "0";
-  rows.forEach(function(r){ if (r) r.style.display = show ? (r._flex ? "flex" : "block") : "none"; });
-}
-function collapseCfg(card) {
-  var rows = [card.querySelector(".cfgrow"), card.querySelector(".ptzrow"), card.querySelector(".ctrlrow")];
-  rows.forEach(function(r){
-    if (!r) return;
-    r._flex = r.style.display === "flex";
-    r.style.display = "none";
+  function fillFps() {
+    var r = res.value.split("x"), cur = +fps.value || d.fps;
+    fps.innerHTML = "";
+    d.formats.filter(function (f) { return f.width == r[0] && f.height == r[1]; })
+      .sort(function (a, b) { return b.fps - a.fps; })
+      .forEach(function (f) {
+        var o = el("option", {value: f.fps}, f.fps + " fps");
+        if (f.fps == cur) o.selected = true;
+        fps.appendChild(o);
+      });
+  }
+  res.onchange = fillFps; fillFps();
+  ["1M", "2M", "4M", "6M", "8M", "12M", "16M"].concat(
+    ["1M", "2M", "4M", "6M", "8M", "12M", "16M"].indexOf(d.bitrate) < 0 && d.bitrate ? [d.bitrate] : []
+  ).forEach(function (v) {
+    var o = el("option", {value: v}, v.replace("M", " Mbps").replace("K", " Kbps"));
+    if (v === d.bitrate) o.selected = true;
+    br.appendChild(o);
   });
-  card.dataset.cfg = "0";
-}
-function fmtDur(ts) {
-  if (!ts) return "";
-  var s = Math.max(0, Math.round(ts - Date.now()/1000));
-  var h = Math.floor(s/3600), m = Math.floor(s%3600/60);
-  return (h>0 ? h+"h " : "") + m + "m";
-}
-function fmtT(v){ return v == null ? "-" : Math.round(v); }
-function refreshPrinter(id) {
-  var card = document.getElementById("cam_" + id);
-  if (!card) return;
-  fetch("api/printer/" + id).then(r=>r.json()).then(function(d){
-    var p = card.querySelector(".printer");
-    if (d.error || !d.state) { p.style.display = "none"; return; }
-    p.style.display = "block";
-    var st = p.querySelector(".pst");
-    st.textContent = PSTATE[d.state] || d.state;
-    st.className = "pst " + d.state;
-    var txt = d.progress != null ? Math.round(d.progress*100) + "%" : "";
-    if (d.total_layer) txt += " | " + (d.layer||0) + "/" + d.total_layer + " 层";
-    var vt = p.parentElement.querySelector(".vtime");
-    if (d.eta) {
-      var rem = "剩 " + fmtDur(d.eta);
-      txt += " " + rem;
-      if (vt) { vt.textContent = rem; vt.style.display = "block"; }
-    } else if (vt) {
-      vt.style.display = "none";
-    }
-    if (d.ext_temp != null) {
-      txt += " 喷头" + fmtT(d.ext_temp) + "/" + fmtT(d.ext_target) + "\u00b0";
-    }
-    p.querySelector(".pp").textContent = txt;
-    p.querySelector(".pname").textContent = d.filename || "";
-    p.querySelector(".pbar i").style.width = (d.progress!=null? Math.round(d.progress*100):0) + "%";
-    var pb = p.querySelector(".pcmd.pause"), rb = p.querySelector(".pcmd.resume");
-    if (pb && rb) {
-      pb.style.display = d.state === "printing" ? "" : "none";
-      rb.style.display = d.state === "paused" ? "" : "none";
-      pb.onclick = function(){ post("api/printer/" + id + "/cmd", {cmd:"pause"}).then(function(r){ if(r.error) alert("暂停失败: "+r.error); }); };
-      rb.onclick = function(){ post("api/printer/" + id + "/cmd", {cmd:"resume"}).then(function(r){ if(r.error) alert("继续失败: "+r.error); }); };
-    }
-  }).catch(function(){});
-}
-function refreshCam(id) {
-  fetch("api/cam/" + id).then(r=>r.json()).then(function(d){
-    if (d.error) return;
-    var card = document.getElementById("cam_" + id);
-    if (!card) return;
-    setStatus(card, d);
-    if (d.ptz) {
-      var row = card.querySelector(".ptzrow");
-      row.querySelector(".st").textContent = "pan:" + d.ptz.pan_absolute + " tilt:" + d.ptz.tilt_absolute;
-      window["_ptz_" + id] = d.ptz;
-    }
-  }).catch(function(){});
-}
-function init() {
-  fetch("api/cams").then(r=>r.json()).then(function(cams){
-    cams.forEach(function(cam){
-      var card = buildCard(cam);
-      setStatus(card, cam);
-      card.querySelector(".btnwake").onclick = function(){
-        var b = this; b.disabled = true;
-        post("api/cam/" + cam.id + "/wake", {}).then(function(d){
-          if (d.ok) { refreshCam(cam.id); PLAYERS[cam.id].start(); }
-        }).finally(function(){ b.disabled = false; });
+  $(".f-apply", foot).onclick = function () {
+    var btn = this, r = res.value.split("x");
+    btn.disabled = true; btn.textContent = "切换中…";
+    self.showMsg("正在切换参数并重启推流…", true);
+    api("api/cam/" + encodeURIComponent(self.id) + "/config",
+      {width: +r[0], height: +r[1], fps: +fps.value, bitrate: br.value})
+      .then(function (x) {
+        toast("已应用 " + x.width + "×" + x.height + " @" + x.fps + "fps " + x.bitrate +
+          (x.camera_confirmed ? "" : "（摄像头未确认格式, 若无画面请检查）"), x.camera_confirmed ? "ok" : "err");
+        setTimeout(function () { self.applyView(true); App.refreshStatus(); }, 3500);
+      })
+      .catch(function (e) { toast("切换失败: " + e.message, "err"); self.applyView(true); })
+      .finally(function () { btn.disabled = false; btn.textContent = "应用并重启推流"; });
+  };
+  return pane;
+};
+Camera.prototype.panePtz = function (d) {
+  var self = this, c = d.controls, pane = el("div", {class: "pane"});
+  var cur = Object.assign({}, d.ptz);
+  function stepOf(n) {
+    var x = c[n]; if (!x) return 0;
+    var s = Math.max(x.step || 1, Math.round((x.max - x.min) / 20 / (x.step || 1)) * (x.step || 1));
+    return s;
+  }
+  function clamp(n, v) { var x = c[n]; return x ? Math.max(x.min, Math.min(x.max, v)) : v; }
+  function send(body) {
+    return api("api/cam/" + encodeURIComponent(self.id) + "/ptz", body).then(function (r) {
+      if (r.ptz) cur = r.ptz;
+      pos.textContent = "pan " + (cur.pan_absolute != null ? cur.pan_absolute : "-") + " · tilt " + (cur.tilt_absolute != null ? cur.tilt_absolute : "-");
+    }).catch(function (e) { toast("云台: " + e.message, "err"); });
+  }
+  var hasPT = c.pan_absolute || c.tilt_absolute;
+  var wrap = el("div", {class: "ptz"});
+  if (hasPT) {
+    var pad = el("div", {class: "dpad"},
+      '<span></span><button class="btn" data-d="0,1">▲</button><span></span>' +
+      '<button class="btn" data-d="-1,0">◀</button><button class="btn" data-d="c">◎</button><button class="btn" data-d="1,0">▶</button>' +
+      '<span></span><button class="btn" data-d="0,-1">▼</button><span></span>');
+    $$("button", pad).forEach(function (b) {
+      b.onclick = function () {
+        if (b.dataset.d === "c") return send({pan: c.pan_absolute ? clamp("pan_absolute", 0) : undefined, tilt: c.tilt_absolute ? clamp("tilt_absolute", 0) : undefined});
+        var dd = b.dataset.d.split(","), body = {};
+        if (+dd[0] && c.pan_absolute) body.pan = clamp("pan_absolute", (cur.pan_absolute || 0) + dd[0] * stepOf("pan_absolute"));
+        if (+dd[1] && c.tilt_absolute) body.tilt = clamp("tilt_absolute", (cur.tilt_absolute || 0) + dd[1] * stepOf("tilt_absolute"));
+        if (Object.keys(body).length) send(body);
       };
-      card.querySelector(".btnsets").onclick = function(){ toggleCfg(card); };
-      post("api/cam/" + cam.id + "/wake", {}).catch(function(){});
-      card.querySelector(".btnsolo").onclick = function(){ soloMode(card); };
-      card.querySelector(".btnfs").onclick = function(){
-        if (document.fullscreenElement) document.exitFullscreen();
-        else if (card.requestFullscreen) card.requestFullscreen();
-        else if (card.webkitRequestFullscreen) card.webkitRequestFullscreen();
-      };
-      PLAYERS[cam.id] = play(cam.id, card);
-      if (cam.webrtc) showWebrtc(cam.id, card);
-      fetch("api/cam/" + cam.id).then(r=>r.json()).then(function(d){
-        if (d.error) return;
-        buildConfig(cam.id, card, d);
-        buildPtz(cam.id, card, d);
-        buildControls(cam.id, card, d);
-        collapseCfg(card);
-        if ((d.mode || "h264") === "mjpeg") showMjpeg(cam.id, card);
-      }).catch(function(){});
-      setInterval(function(){ refreshCam(cam.id); }, 5000);
-      refreshPrinter(cam.id);
-      setInterval(function(){ refreshPrinter(cam.id); }, 5000);
     });
-  }).catch(function(){});
-}
-init();
+    wrap.appendChild(pad);
+  }
+  if (c.zoom_absolute) {
+    var z = c.zoom_absolute, zw = el("div", {class: "zoom"});
+    zw.innerHTML = '<div>变焦 <b class="zv"></b></div><input type="range" min="' + z.min + '" max="' + z.max + '" step="' + (z.step || 1) + '">';
+    var zr = $("input", zw), zv = $(".zv", zw);
+    function zl(v) { return z.min > 0 ? (v / z.min).toFixed(1) + "×" : v; }
+    zr.value = cur.zoom_absolute != null ? cur.zoom_absolute : z.value;
+    zv.textContent = zl(zr.value);
+    zr.oninput = function () { zv.textContent = zl(zr.value); sendZoom(); };
+    var sendZoom = debounce(function () { send({zoom: +zr.value}); }, 250);
+    wrap.appendChild(zw);
+  }
+  pane.appendChild(wrap);
+  var pos = el("div", {class: "note"});
+  pos.textContent = hasPT ? "pan " + cur.pan_absolute + " · tilt " + cur.tilt_absolute : "";
+  pane.appendChild(pos);
+  return pane;
+};
+var GROUPS = [
+  {title: "对焦", auto: "focus_automatic_continuous", autoOn: 1, items: ["focus_absolute"]},
+  {title: "白平衡", auto: "white_balance_automatic", autoOn: 1, items: ["white_balance_temperature"]},
+  {title: "曝光", auto: "auto_exposure", autoOn: 3, autoOff: 1, items: ["exposure_time_absolute", "gain"]},
+  {title: "图像", items: ["brightness", "contrast", "saturation", "hue", "sharpness", "gamma", "backlight_compensation"]},
+  {title: "其他", items: ["power_line_frequency"]}
+];
+var CTRL_NAME = {focus_absolute: "焦距", white_balance_temperature: "色温", exposure_time_absolute: "曝光时间", gain: "增益",
+  brightness: "亮度", contrast: "对比度", saturation: "饱和度", hue: "色调", sharpness: "锐度", gamma: "伽马",
+  backlight_compensation: "背光补偿", power_line_frequency: "防闪烁"};
+Camera.prototype.paneImage = function (d) {
+  var self = this, c = d.controls || {}, pane = el("div", {class: "pane"}), groups = el("div", {class: "ctl-groups"});
+  function setCtrl(name, value) {
+    return api("api/cam/" + encodeURIComponent(self.id) + "/control", {ctrl: name, value: value})
+      .catch(function (e) { toast(name + ": " + e.message, "err"); });
+  }
+  GROUPS.forEach(function (g) {
+    var names = g.items.filter(function (n) { return !!c[n]; });
+    var auto = g.auto && c[g.auto];
+    if (!names.length && !auto) return;
+    var box = el("div", {class: "ctl-group"});
+    var h = el("h4", null, esc(g.title));
+    box.appendChild(h);
+    var sliders = [];
+    if (auto) {
+      var onVal = g.autoOn, offVal = g.autoOff != null ? g.autoOff : 0;
+      var lab = el("label", null, '<span>自动</span><span class="switch"><input type="checkbox"><span></span></span>');
+      var cb = $("input", lab);
+      cb.checked = auto.value == onVal;
+      cb.onchange = function () {
+        setCtrl(g.auto, cb.checked ? onVal : offVal);
+        sliders.forEach(function (s) { s.disabled = cb.checked; });
+      };
+      h.appendChild(lab);
+    }
+    names.forEach(function (n) {
+      var x = c[n], row = el("div", {class: "ctl"});
+      row.innerHTML = "<span>" + esc(CTRL_NAME[n] || n) + '</span><input type="range"><output></output>';
+      var r = $("input", row), o = $("output", row);
+      r.min = x.min; r.max = x.max; r.step = x.step || 1; r.value = x.value;
+      o.textContent = x.value;
+      if (auto && auto.value == g.autoOn && g.items.indexOf(n) === 0) r.disabled = true;
+      if (auto && g.items.indexOf(n) === 0) sliders.push(r);
+      var push = debounce(function () { setCtrl(n, +r.value); }, 200);
+      r.oninput = function () { o.textContent = r.value; push(); };
+      box.appendChild(row);
+    });
+    groups.appendChild(box);
+  });
+  if (!groups.children.length) return null;
+  pane.appendChild(groups);
+  return pane;
+};
+
+/* ============================================================
+ * 补光灯
+ * ============================================================ */
+var Light = {
+  busy: false,
+  init: function () {
+    var self = this;
+    $("#lightPower").onchange = function () {
+      var on = this.checked;
+      self.busy = true;
+      api("api/light/power", {on: on}).then(function () { toast("补光灯已" + (on ? "开启" : "关闭"), "ok"); })
+        .catch(function (e) { toast("补光灯: " + e.message, "err"); $("#lightPower").checked = !on; })
+        .finally(function () { self.busy = false; });
+    };
+    var send = debounce(function (v) {
+      api("api/light/brightness", {value: v}).then(function (r) {
+        if (r.applied_brightness != null && r.applied_brightness !== v) toast("亮度已限制为 75%");
+      }).catch(function (e) { toast("亮度: " + e.message, "err"); }).finally(function () { self.busy = false; });
+    }, 300);
+    $("#lightBri").oninput = function () {
+      self.busy = true;
+      $("#lightVal").textContent = Math.round(this.value / 2.55) + "%";
+      send(+this.value);
+    };
+    this.refresh();
+  },
+  refresh: function () {
+    if (this.busy) return;
+    fetch("api/light/status").then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+      if (!d || d.ok === false || d.available === false) { $("#light").hidden = true; return; }
+      $("#light").hidden = false;
+      var p = d.power != null ? d.power : d.on;
+      $("#lightPower").checked = p === true || p === 1 || p === "on" || p === "ON";
+      var b = d.brightness != null ? d.brightness : d.value;
+      if (typeof b === "number") {
+        $("#lightBri").value = Math.min(191, b);
+        $("#lightVal").textContent = Math.round(b / 2.55) + "%";
+      }
+    }).catch(function () { $("#light").hidden = true; });
+  }
+};
+
+/* ============================================================
+ * 应用
+ * ============================================================ */
+var App = {
+  info: {},
+  init: function () {
+    var self = this;
+    if (store("cols") === "1") document.body.classList.add("cols1");
+    $("#btnCols").onclick = function () {
+      document.body.classList.toggle("cols1");
+      store("cols", document.body.classList.contains("cols1") ? "1" : "0");
+    };
+    $("#btnBack").onclick = function () { self.solo(null); };
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && document.body.classList.contains("solo") && !document.fullscreenElement) self.solo(null);
+    });
+    window.addEventListener("hashchange", function () { self.applyHash(); });
+    document.addEventListener("visibilitychange", function () { if (!document.hidden) self.resume(); });
+    window.addEventListener("focus", function () { self.resume(); });
+    setInterval(function () {
+      var d = new Date();
+      $("#clock").textContent = d.toLocaleTimeString("zh-CN", {hour12: false});
+    }, 1000);
+
+    Promise.all([ensureHls(), api("api/info").then(function (i) { self.info = i; }).catch(function () {})])
+      .then(function () { return api("api/cams"); }).then(function (cams) {
+      $("#camCount").textContent = cams.length + " 路";
+      if (!cams.length) {
+        $("#grid").appendChild(el("div", {class: "empty"}, "没有配置摄像头，请编辑 cameras.json"));
+        return;
+      }
+      cams.forEach(function (info) {
+        var cam = new Camera(info);
+        CAMS[info.id] = cam;
+        $("#grid").appendChild(cam.root);
+        cam.wake(false);          /* 幂等: 只唤醒休眠的流 */
+        cam.refreshPrinter();
+      });
+      self.applyHash();
+      setInterval(function () { if (!document.hidden) self.refreshStatus(); }, 5000);
+      setInterval(function () {
+        if (document.hidden) return;
+        Object.keys(CAMS).forEach(function (id) { CAMS[id].refreshPrinter(); });
+      }, 5000);
+    }).catch(function (e) {
+      $("#grid").appendChild(el("div", {class: "empty"}, "加载失败: " + esc(e.message)));
+    });
+    Light.init();
+    setInterval(function () { if (!document.hidden) Light.refresh(); }, 10000);
+  },
+  refreshStatus: function () {
+    api("api/cams").then(function (list) {
+      list.forEach(function (d) { if (CAMS[d.id]) CAMS[d.id].updateStatus(d); });
+    }).catch(function () {});
+  },
+  resume: function () {
+    Object.keys(CAMS).forEach(function (id) { if (CAMS[id].view === "hls") CAMS[id].player.kick(); });
+    this.refreshStatus();
+  },
+  solo: function (id) {
+    if (id) { location.hash = "cam=" + encodeURIComponent(id); return; }
+    history.replaceState(null, "", location.pathname + location.search);
+    this.applyHash();
+  },
+  applyHash: function () {
+    var m = /cam=([^&]+)/.exec(location.hash), id = m && decodeURIComponent(m[1]);
+    var on = !!(id && CAMS[id]);
+    document.body.classList.toggle("solo", on);
+    $("#btnBack").hidden = !on;
+    Object.keys(CAMS).forEach(function (k) {
+      var c = CAMS[k], focus = on && k === id;
+      c.root.classList.toggle("focus", focus);
+      c.q(".b-solo").hidden = on;
+      /* 单画面时暂停其他 HLS/MJPEG/WebRTC, 节省带宽和解码 */
+      c.suspended = on && !focus;
+      if (c.suspended) { c.player.stop(); c.img.removeAttribute("src"); c.frame.removeAttribute("src"); c.view = null; }
+      else if (!c.view) c.applyView(true);
+    });
+  }
+};
+App.init();
 </script>
 </body>
 </html>
