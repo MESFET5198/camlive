@@ -4,6 +4,20 @@ rtspAddress: :8554
 webrtc: true
 webrtcAddress: :8889
 webrtcLocalUDPAddress: :8189
-# 浏览器需要连接的局域网 IP 由 compose.yml 的 MTX_WEBRTCADDITIONALHOSTS 提供(取 .env 的 HOST_IP)
+# 浏览器连接 WebRTC 用的局域网 IP: 在 WebUI「系统设置」里填写(通过下面的控制 API 下发),
+# 未填写时使用 compose.yml 的 MTX_WEBRTCADDITIONALHOSTS(取 .env 的 HOST_IP)
+
+# 控制 API: camlive 用它下发 WebUI 中的设置。9997 端口没有映射到宿主机, 只有 docker 内网可达。
+api: true
+apiAddress: :9997
+authInternalUsers:
+  - user: any
+    pass:
+    ips: []
+    permissions:
+      - action: publish
+      - action: read
+      - action: playback
+      - action: api
 paths:
   all_others:

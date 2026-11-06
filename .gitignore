@@ -19,3 +19,6 @@ __pycache__/
 
 # Local secrets
 .env
+
+# WebUI 保存的运行时配置(含密码哈希)
+config/data/

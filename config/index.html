@@ -149,6 +149,43 @@ body.solo .cam.focus .stage{aspect-ratio:auto;height:calc(100vh - 230px);min-hei
 @keyframes tin{from{opacity:0;transform:translateY(6px)}}
 .empty{grid-column:1/-1;text-align:center;color:var(--mute);padding:60px 0}
 
+/* ---------- 设置页 ---------- */
+.sheet{position:fixed;inset:0;z-index:40;background:rgba(0,0,0,.55);display:flex;justify-content:flex-end}
+.sheet-in{width:min(760px,100%);height:100%;background:var(--bg);border-left:1px solid var(--line);display:flex;flex-direction:column}
+.sheet-head{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}
+.sheet-head h2{margin:0;font-size:16px;flex:1}
+.sheet-tabs{display:flex;gap:2px;padding:0 12px;border-bottom:1px solid var(--line)}
+.sheet-tabs button{background:none;border:0;padding:10px 14px;cursor:pointer;color:var(--dim);border-bottom:2px solid transparent}
+.sheet-tabs button.on{color:var(--text);border-bottom-color:var(--accent)}
+.sheet-body{flex:1;overflow:auto;padding:14px 16px 40px;display:grid;gap:12px;align-content:start}
+.scard{background:var(--panel);border:1px solid var(--line);border-radius:var(--r)}
+.scard>summary{list-style:none;cursor:pointer;display:flex;align-items:center;gap:10px;padding:12px 14px}
+.scard>summary::-webkit-details-marker{display:none}
+.scard>summary:after{content:"▸";color:var(--mute);margin-left:auto;transition:.15s}
+.scard[open]>summary:after{transform:rotate(90deg)}
+.scard>summary b{font-size:14px}
+.scard>summary small{color:var(--mute);font:11px var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.sform{padding:4px 14px 14px;display:grid;gap:14px}
+.sheet-body>*{min-width:0}
+.scard>summary>*{min-width:0}
+.scard>summary small{flex:1}
+.sform fieldset{min-width:0;border:0;margin:0;padding:0;display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px 12px}
+.sform legend{font-size:12px;font-weight:600;color:var(--dim);padding:0 0 6px;grid-column:1/-1}
+.fld{display:grid;gap:4px;font-size:12px;color:var(--dim);min-width:0}
+.fld.wide{grid-column:1/-1}
+.fld input[type=text],.fld input[type=number],.fld input[type=password],.fld select{width:100%;height:32px;background:var(--panel2);border:1px solid var(--line2);border-radius:7px;padding:0 9px;color:var(--text)}
+.fld input:focus,.fld select:focus{outline:none;border-color:var(--accent)}
+.fld .row{display:flex;gap:6px}
+.fld .row input{flex:1;min-width:0}
+.fld .hint{font-size:11px;color:var(--mute)}
+.fld.sw{display:flex;align-items:center;gap:8px;color:var(--text);font-size:13px}
+.src-tag{font-size:10px;padding:1px 6px;border-radius:999px;background:var(--panel2);color:var(--mute);border:1px solid var(--line);margin-left:6px}
+.src-tag.webui{color:#93c5fd;border-color:rgba(59,130,246,.4)}
+.sactions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.sactions .sp{flex:1}
+.test-res{font-size:12px}
+.test-res.ok{color:#4ade80}.test-res.err{color:#f87171}
+
 @media (max-width:640px){
   .topbar{gap:8px;padding:8px 10px}
   .brand small,.clock{display:none}
@@ -158,6 +195,7 @@ body.solo .cam.focus .stage{aspect-ratio:auto;height:calc(100vh - 230px);min-hei
   .cam-title{flex:1 1 100%}
   .cam-head .spec{margin-right:auto}
   .btn{padding:0 9px}
+  .sheet-body{padding:12px 10px 40px}
   body.solo .cam.focus .stage{height:auto;aspect-ratio:16/9}
 }
 </style>
@@ -175,10 +213,18 @@ body.solo .cam.focus .stage{aspect-ratio:auto;height:calc(100vh - 230px);min-hei
   <span class="clock" id="clock"></span>
   <button class="btn" id="btnBack" hidden>← <span class="t">全部画面</span></button>
   <button class="btn icon" id="btnCols" title="切换单列/多列">▦</button>
+  <button class="btn" id="btnSettings" title="摄像头、打印机、网络、密码设置">⚙ <span class="t">设置</span></button>
 </header>
 
 <main class="grid" id="grid"></main>
 <div id="toasts"></div>
+<div class="sheet" id="settings" hidden>
+  <div class="sheet-in">
+    <div class="sheet-head"><h2>设置</h2><button class="btn icon" id="settingsClose" title="关闭">✕</button></div>
+    <nav class="sheet-tabs"><button data-t="cams" class="on">摄像头与打印机</button><button data-t="sys">系统</button></nav>
+    <div class="sheet-body" id="settingsBody"></div>
+  </div>
+</div>
 
 <template id="tplCam">
   <article class="cam">
@@ -250,8 +296,9 @@ function esc(s) {
     return {"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c];
   });
 }
-function api(path, body) {
-  var opt = body === undefined ? {} : {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)};
+function api(path, body, method) {
+  var opt = body === undefined ? {method: method || "GET"} :
+    {method: method || "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)};
   return fetch(path, opt).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (d) {
       if (!r.ok || d.error) { var e = new Error(d.error || d.last_error || ("HTTP " + r.status)); e.data = d; throw e; }
@@ -690,6 +737,9 @@ Camera.prototype.buildSettings = function (d) {
 };
 Camera.prototype.paneStream = function (d) {
   var self = this, pane = el("div", {class: "pane"});
+  var edit = el("button", {class: "btn"}, "✎ 编辑设备 / 打印机地址等配置");
+  edit.onclick = function () { Settings.open(self.id); };
+  setTimeout(function () { pane.appendChild(edit); }, 0);
   var form = el("div", {class: "form"});
   form.innerHTML =
     '<label>模式<select class="f-mode"><option value="h264">H.264 (HLS/WebRTC)</option><option value="mjpeg">MJPEG 低延迟</option></select></label>';
@@ -911,6 +961,277 @@ var Light = {
 /* ============================================================
  * 应用
  * ============================================================ */
+/* ============================================================
+ * 设置页: 摄像头/打印机/系统, 保存到服务器 config/data
+ * ============================================================ */
+var CAM_FIELDS = [
+  {legend: "基本"},
+  {k: "name", label: "显示名称", type: "text"},
+  {k: "device", label: "设备", type: "device", wide: true,
+    hint: "本机摄像头填 /dev/videoX；打印机自带的网络摄像头填 http://IP:8080/webcam/?action=stream"},
+  {k: "auto_name", label: "名称跟随设备型号", type: "bool"},
+  {legend: "画面与推流"},
+  {k: "mode", label: "模式", type: "select", opts: [["h264", "H.264 (HLS/WebRTC)"], ["mjpeg", "MJPEG 低延迟"]]},
+  {k: "input_format", label: "摄像头输出格式", type: "select", opts: [["mjpeg", "MJPEG (默认)"], ["h264", "H.264 (Insta360 等)"], ["yuyv422", "YUYV 原始"]]},
+  {k: "width", label: "宽", type: "number"},
+  {k: "height", label: "高", type: "number"},
+  {k: "fps", label: "帧率", type: "number"},
+  {k: "bitrate", label: "码率", type: "text", ph: "4M"},
+  {k: "rotate", label: "旋转", type: "select", opts: [["0", "不旋转"], ["90", "90°"], ["180", "180°"], ["270", "270°"]]},
+  {k: "webrtc", label: "WebRTC 低延迟预览", type: "bool"},
+  {legend: "打印机"},
+  {k: "printer", label: "打印机地址 (Moonraker)", type: "printer", wide: true, ph: "http://192.168.31.50:7125",
+    hint: "填 IP 即可，端口默认 7125；留空表示这个摄像头不关联打印机"},
+  {k: "printer_light", label: "打印机舱灯", type: "select", opts: [["", "无"], ["phrozen_arco", "Phrozen ARCO 原厂舱灯"]]},
+  {k: "timelapse", label: "打印时自动延时摄影", type: "bool"},
+  {k: "light_auto", label: "打印时自动开补光灯", type: "bool"},
+  {k: "sleep", label: "打印完成且无人看时休眠", type: "bool"},
+  {k: "sleep_no_viewer", label: "无人观看时休眠", type: "bool"},
+  {legend: "高级"},
+  {k: "colorbalance", label: "颜色平衡", type: "text", ph: "rs=0.05:bs=-0.05"},
+  {k: "sharpen", label: "软件锐化", type: "bool"},
+  {k: "sharpen_until_next_print", label: "下次打印时自动关闭锐化", type: "bool"},
+  {k: "max_width", label: "可选分辨率上限 宽", type: "number", ph: "不限"},
+  {k: "max_height", label: "可选分辨率上限 高", type: "number", ph: "不限"},
+  {k: "usb_vendor", label: "USB vendor (掉线重置用)", type: "text", ph: "如 2e1a"},
+  {k: "usb_reset", label: "掉线时自动 USB 重置", type: "bool"}
+];
+var SRC_NAME = {webui: "网页设置", env: "环境变量", "default": "默认值"};
+
+var Settings = {
+  data: null, tab: "cams",
+  init: function () {
+    var self = this;
+    $("#settingsClose").onclick = function () { self.close(); };
+    $("#settings").onclick = function (e) { if (e.target.id === "settings") self.close(); };
+    $$("#settings .sheet-tabs button").forEach(function (b) {
+      b.onclick = function () { self.tab = b.dataset.t; self.render(); };
+    });
+    document.addEventListener("keydown", function (e) {
+      if (e.key === "Escape" && !$("#settings").hidden) self.close();
+    });
+  },
+  open: function (focusId) {
+    var self = this;
+    this.focus = focusId || null;
+    this.tab = "cams";
+    $("#settings").hidden = false;
+    $("#settingsBody").innerHTML = '<div class="note">读取设置…</div>';
+    this.load().then(function () { self.render(); });
+  },
+  close: function () {
+    $("#settings").hidden = true;
+    if (this.dirty) { this.dirty = false; App.loadInfo().then(function () { App.loadCams(); }); }
+  },
+  load: function () {
+    var self = this;
+    return api("api/settings").then(function (d) { self.data = d; })
+      .catch(function (e) { $("#settingsBody").innerHTML = '<div class="note">读取失败: ' + esc(e.message) + "</div>"; throw e; });
+  },
+  render: function () {
+    var self = this, body = $("#settingsBody");
+    $$("#settings .sheet-tabs button").forEach(function (b) { b.classList.toggle("on", b.dataset.t === self.tab); });
+    body.innerHTML = "";
+    if (!this.data) return;
+    if (this.tab === "sys") return this.renderSystem(body);
+    var dl = el("datalist", {id: "devList"});
+    this.data.devices.forEach(function (d) { dl.appendChild(el("option", {value: d.path, label: d.name})); });
+    body.appendChild(dl);
+    this.data.cameras.forEach(function (c) { body.appendChild(self.camCard(c, false)); });
+    var add = el("button", {class: "btn"}, "＋ 添加摄像头");
+    add.onclick = function () {
+      var card = self.camCard({mode: "h264", width: 1280, height: 720, fps: 25, bitrate: "4M"}, true);
+      body.insertBefore(card, add); card.open = true; add.hidden = true;
+      $("input", card).focus();
+    };
+    body.appendChild(add);
+    if (this.focus === "__new__") add.click();
+  },
+
+  /* ---------- 摄像头卡片 ---------- */
+  camCard: function (cam, isNew) {
+    var self = this;
+    var card = el("details", {class: "scard"});
+    card.open = !isNew && this.focus === cam.id;
+    var sum = el("summary");
+    sum.innerHTML = "<b>" + esc(isNew ? "新摄像头" : cam.name || cam.id) + "</b><small>" +
+      esc(isNew ? "" : cam.id + " · " + cam.device + (cam.printer ? " · 打印机 " + cam.printer.replace(/^https?:\/\//, "") : "")) + "</small>";
+    card.appendChild(sum);
+    var form = el("div", {class: "sform"}), fs = null, inputs = {};
+    if (isNew) {
+      fs = el("fieldset");
+      fs.appendChild(this.field({k: "id", label: "ID (英文, 创建后不可改)", type: "text", ph: "如 cam2",
+        hint: "用作流文件名和延时摄影目录名"}, "", inputs));
+      form.appendChild(fs);
+    }
+    CAM_FIELDS.forEach(function (f) {
+      if (f.legend) { fs = el("fieldset"); fs.appendChild(el("legend", null, esc(f.legend))); form.appendChild(fs); return; }
+      var v = cam[f.k];
+      if (f.k === "rotate") v = String(v || 0);
+      fs.appendChild(self.field(f, v, inputs));
+    });
+    var act = el("div", {class: "sactions"});
+    var save = el("button", {class: "btn pri"}, isNew ? "创建" : "保存");
+    var del = el("button", {class: "btn danger"}, "删除");
+    act.appendChild(save); act.appendChild(el("span", {class: "sp"}));
+    if (!isNew) act.appendChild(del);
+    form.appendChild(act);
+    card.appendChild(form);
+
+    save.onclick = function () {
+      var body = {};
+      Object.keys(inputs).forEach(function (k) {
+        var i = inputs[k];
+        body[k] = i.type === "checkbox" ? i.checked : i.type === "number" ? (i.value === "" ? 0 : +i.value) : i.value.trim();
+      });
+      save.disabled = true;
+      var req = isNew ? api("api/settings/cameras", body) : api("api/settings/cameras/" + encodeURIComponent(cam.id), body);
+      req.then(function (r) {
+        toast((isNew ? "已创建 " : "已保存 ") + (r.camera.name || r.camera.id) + (r.restarted ? "，推流重启中" : ""), "ok");
+        self.dirty = true;
+        self.focus = r.camera.id;
+        return self.load().then(function () { self.render(); });
+      }).catch(function (e) { toast("保存失败: " + e.message, "err"); })
+        .finally(function () { save.disabled = false; });
+    };
+    del.onclick = function () {
+      if (!del.classList.contains("armed")) {
+        del.classList.add("armed"); del.textContent = "再点一次确认删除";
+        setTimeout(function () { del.classList.remove("armed"); del.textContent = "删除"; }, 3000);
+        return;
+      }
+      api("api/settings/cameras/" + encodeURIComponent(cam.id), undefined, "DELETE").then(function () {
+        toast("已删除 " + (cam.name || cam.id), "ok");
+        self.dirty = true;
+        return self.load().then(function () { self.render(); });
+      }).catch(function (e) { toast("删除失败: " + e.message, "err"); });
+    };
+    return card;
+  },
+  field: function (f, v, inputs) {
+    var w = el("label", {class: "fld" + (f.wide ? " wide" : "") + (f.type === "bool" ? " sw" : "")});
+    var input;
+    if (f.type === "bool") {
+      w.innerHTML = '<span class="switch"><input type="checkbox"><span></span></span><span>' + esc(f.label) + "</span>";
+      input = $("input", w); input.checked = !!v;
+    } else {
+      w.appendChild(el("span", null, esc(f.label)));
+      if (f.type === "select") {
+        input = el("select");
+        f.opts.forEach(function (o) { input.appendChild(el("option", {value: o[0]}, esc(o[1]))); });
+        input.value = v == null ? f.opts[0][0] : v;
+        w.appendChild(input);
+      } else {
+        input = el("input", {type: f.type === "number" ? "number" : "text"});
+        if (f.ph) input.placeholder = f.ph;
+        input.value = v == null || (f.type === "number" && !v && f.ph) ? "" : v;
+        if (f.type === "device") input.setAttribute("list", "devList");
+        if (f.type === "printer") {
+          var row = el("div", {class: "row"}), btn = el("button", {class: "btn", type: "button"}, "测试连接");
+          var res = el("span", {class: "test-res"});
+          row.appendChild(input); row.appendChild(btn);
+          w.appendChild(row); w.appendChild(res);
+          btn.onclick = function (e) {
+            e.preventDefault();
+            if (!input.value.trim()) { res.className = "test-res err"; res.textContent = "请先填写地址"; return; }
+            btn.disabled = true; res.className = "test-res"; res.textContent = "连接中…";
+            api("api/settings/test-printer", {url: input.value.trim()}).then(function (r) {
+              input.value = r.url;
+              res.className = "test-res ok";
+              res.textContent = "✓ 已连接 " + (r.hostname || "") + " · Klipper " + (r.state || "-") +
+                " · 打印状态 " + (PSTATE[r.print_state] || r.print_state || "-");
+            }).catch(function (e) { res.className = "test-res err"; res.textContent = "✕ " + e.message; })
+              .finally(function () { btn.disabled = false; });
+          };
+        } else {
+          w.appendChild(input);
+        }
+      }
+    }
+    if (f.hint) w.appendChild(el("span", {class: "hint"}, esc(f.hint)));
+    inputs[f.k] = input;
+    return w;
+  },
+
+  /* ---------- 系统设置 ---------- */
+  renderSystem: function (body) {
+    var self = this, sys = this.data.system, mtx = this.data.mediamtx || {};
+    var card = el("div", {class: "scard"}), form = el("div", {class: "sform"});
+    card.appendChild(form);
+    form.style.paddingTop = "14px";
+    var inputs = {};
+    function sfield(k, label, hint, extra) {
+      var s = sys[k], w = el("label", {class: "fld wide"});
+      w.innerHTML = "<span>" + esc(label) + '<span class="src-tag ' + s.source + '">' + SRC_NAME[s.source] + "</span></span>";
+      var row = el("div", {class: "row"}), i = el("input", {type: "text"});
+      i.value = s.saved || ""; i.placeholder = s.value || s["default"] || "";
+      row.appendChild(i);
+      if (extra) row.appendChild(extra(i));
+      w.appendChild(row);
+      w.appendChild(el("span", {class: "hint"}, esc(hint + (s.source !== "webui" ? "（留空使用 " + SRC_NAME[s.source] + "：" + (s.value || "未设置") + "）" : ""))));
+      inputs[k] = i;
+      return w;
+    }
+    var fs = el("fieldset");
+    fs.appendChild(el("legend", null, "网络"));
+    fs.appendChild(sfield("host_ip", "本机局域网 IP（WebRTC 用）",
+      "浏览器通过这个 IP 连接 WebRTC，填错会黑屏。" +
+      (mtx.ok === true ? "已同步到 mediamtx。" : mtx.ok === false ? "暂时无法同步到 mediamtx（" + mtx.error + "），稍后会自动重试。" : ""),
+      function (i) {
+        var b = el("button", {class: "btn", type: "button"}, "用当前地址 " + esc(location.hostname));
+        b.onclick = function (e) { e.preventDefault(); i.value = location.hostname; };
+        return b;
+      }));
+    fs.appendChild(sfield("webrtc_url", "WebRTC 播放地址模板", "{host} = 浏览器访问的主机名，{id} = 摄像头 ID。"));
+    fs.appendChild(sfield("light_api_url", "补光灯服务地址 (light_api.py)", "主机上 STM32 补光灯桥接服务。"));
+    form.appendChild(fs);
+
+    var fs2 = el("fieldset");
+    fs2.appendChild(el("legend", null, "访问密码"));
+    fs2.appendChild(sfield("auth_user", "用户名", ""));
+    var pw = el("label", {class: "fld wide"});
+    pw.innerHTML = "<span>新密码</span>";
+    var pwi = el("input", {type: "password", autocomplete: "new-password", placeholder: sys.auth_enabled ? "留空表示不修改" : "设置后访问页面需要登录"});
+    pw.appendChild(pwi);
+    pw.appendChild(el("span", {class: "hint"}, "当前：" + (sys.auth_enabled ? "已启用密码" : "未启用密码，局域网内任何人都能访问和操作打印机") +
+      "（" + (sys.auth_source === "webui" ? "网页设置" : "环境变量") + "）。修改后浏览器会要求重新登录。"));
+    fs2.appendChild(pw);
+    form.appendChild(fs2);
+
+    var act = el("div", {class: "sactions"});
+    var save = el("button", {class: "btn pri"}, "保存");
+    var off = el("button", {class: "btn danger"}, "关闭密码");
+    off.hidden = !sys.auth_enabled;
+    act.appendChild(save); act.appendChild(el("span", {class: "sp"})); act.appendChild(off);
+    form.appendChild(act);
+    body.appendChild(card);
+
+    function submit(extra) {
+      var req = {};
+      Object.keys(inputs).forEach(function (k) { req[k] = inputs[k].value.trim(); });
+      Object.assign(req, extra || {});
+      save.disabled = off.disabled = true;
+      return api("api/settings/system", req).then(function (r) {
+        toast("系统设置已保存", "ok");
+        self.data.system = r.system;
+        self.dirty = true;
+        if ("auth_password" in req) { setTimeout(function () { location.reload(); }, 800); return; }
+        return self.load().then(function () { self.render(); });
+      }).catch(function (e) { toast("保存失败: " + e.message, "err"); })
+        .finally(function () { save.disabled = off.disabled = false; });
+    }
+    save.onclick = function () { submit(pwi.value ? {auth_password: pwi.value} : null); };
+    off.onclick = function () {
+      if (!off.classList.contains("armed")) {
+        off.classList.add("armed"); off.textContent = "再点一次确认关闭";
+        setTimeout(function () { off.classList.remove("armed"); off.textContent = "关闭密码"; }, 3000);
+        return;
+      }
+      submit({auth_password: ""});
+    };
+  }
+};
+
 var App = {
   info: {},
   init: function () {
@@ -932,31 +1253,48 @@ var App = {
       $("#clock").textContent = d.toLocaleTimeString("zh-CN", {hour12: false});
     }, 1000);
 
-    Promise.all([ensureHls(), api("api/info").then(function (i) { self.info = i; }).catch(function () {})])
-      .then(function () { return api("api/cams"); }).then(function (cams) {
+    $("#btnSettings").onclick = function () { Settings.open(); };
+    Promise.all([ensureHls(), this.loadInfo()]).then(function () { return self.loadCams(); });
+    setInterval(function () { if (!document.hidden) self.refreshStatus(); }, 5000);
+    setInterval(function () {
+      if (document.hidden) return;
+      Object.keys(CAMS).forEach(function (id) { CAMS[id].refreshPrinter(); });
+    }, 5000);
+    Light.init();
+    setInterval(function () { if (!document.hidden) Light.refresh(); }, 10000);
+  },
+  loadInfo: function () {
+    var self = this;
+    return api("api/info").then(function (i) { self.info = i; }).catch(function () {});
+  },
+  /* 加载/重新加载全部摄像头(设置页保存后调用) */
+  loadCams: function () {
+    var self = this, grid = $("#grid");
+    Object.keys(CAMS).forEach(function (id) {
+      var c = CAMS[id];
+      c.player.stop(); c.img.removeAttribute("src"); c.frame.removeAttribute("src");
+      delete CAMS[id];
+    });
+    grid.innerHTML = "";
+    return api("api/cams").then(function (cams) {
       $("#camCount").textContent = cams.length + " 路";
       if (!cams.length) {
-        $("#grid").appendChild(el("div", {class: "empty"}, "没有配置摄像头，请编辑 cameras.json"));
+        var e = el("div", {class: "empty"}, '还没有摄像头<br><br><button class="btn pri">＋ 添加摄像头</button>');
+        $("button", e).onclick = function () { Settings.open("__new__"); };
+        grid.appendChild(e);
         return;
       }
       cams.forEach(function (info) {
         var cam = new Camera(info);
         CAMS[info.id] = cam;
-        $("#grid").appendChild(cam.root);
+        grid.appendChild(cam.root);
         cam.wake(false);          /* 幂等: 只唤醒休眠的流 */
         cam.refreshPrinter();
       });
       self.applyHash();
-      setInterval(function () { if (!document.hidden) self.refreshStatus(); }, 5000);
-      setInterval(function () {
-        if (document.hidden) return;
-        Object.keys(CAMS).forEach(function (id) { CAMS[id].refreshPrinter(); });
-      }, 5000);
     }).catch(function (e) {
-      $("#grid").appendChild(el("div", {class: "empty"}, "加载失败: " + esc(e.message)));
+      grid.appendChild(el("div", {class: "empty"}, "加载失败: " + esc(e.message)));
     });
-    Light.init();
-    setInterval(function () { if (!document.hidden) Light.refresh(); }, 10000);
   },
   refreshStatus: function () {
     api("api/cams").then(function (list) {
@@ -988,6 +1326,7 @@ var App = {
     });
   }
 };
+Settings.init();
 App.init();
 </script>
 </body>

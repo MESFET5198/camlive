@@ -8,16 +8,16 @@
    `docker build -t camlive:generic .`（海外加 `--build-arg BASE_IMAGE=debian:bookworm-slim`）
 2. 创建配置目录: `mkdir -p config` (可空, 首次启动自动填充默认配置)
 3. 按你的机器修改 `compose.yml` 的 `devices` 段(摄像头节点数量不同)
-4. 编辑 `config/cameras.json`:
-   - `device`: 摄像头设备路径(用 `v4l2-ctl --list-devices` 查)
-   - `name`: 显示名称(设 `auto_name: true` 则自动取设备名)
-   - `printer`: Klipper/Moonraker 地址(可选, 删除则不显示打印状态)
-   - `usb_vendor`: 摄像头 USB vendor(自愈重置用, 可删)
-   - `max_width/max_height`: 可选分辨率上限
-5. `cp .env.example .env`，填写 `HOST_IP`（本机局域网 IP，WebRTC 需要），建议设置 `CAMLIVE_PASSWORD`
-6. `docker compose up -d` → 打开 http://<机器IP>:8081
+4. `docker compose up -d` → 打开 http://<机器IP>:8081
+5. 点右上角 **⚙ 设置**，在网页里完成全部配置:
+   - 摄像头与打印机: 设备、分辨率、旋转、打印机地址(带「测试连接」)、舱灯、延时摄影、补光灯联动等
+   - 系统: 本机局域网 IP(WebRTC 用)、WebRTC 地址、补光灯服务地址、访问密码
 
-## 配置说明(config/cameras.json)
+网页保存的配置在 `config/data/`（`cameras.json`、`settings.json`），不纳入 git，
+所以 `git pull` 更新程序不会和你的设置冲突。首次启动时会从 `config/cameras.json` 复制一份作为初始配置，
+之后 `config/cameras.json` 只是模板，改它不再生效。`.env` 里的值只作为网页未设置时的默认值。
+
+## 摄像头配置字段(网页设置页中均可修改; 存于 config/data/cameras.json)
 
 | 字段 | 说明 |
 |------|------|
@@ -72,12 +72,12 @@
 若摄像头没有暴露硬件白平衡控制，可在摄像头配置中使用 `colorbalance` 让 ffmpeg 做软件颜色平衡；
 它只影响视频流，不改变摄像头固件设置。
 
-## 环境变量(.env)
+## 环境变量(.env, 可选: 网页里没设置时的默认值)
 
 | 变量 | 说明 |
 |------|------|
 | PORT | Web 端口, 默认 8081 |
-| HOST_IP | 本机局域网 IP, mediamtx 用它告诉浏览器 WebRTC 连接地址 |
+| HOST_IP | 本机局域网 IP, mediamtx 用它告诉浏览器 WebRTC 连接地址(网页设置后通过 mediamtx 控制 API 实时下发) |
 | CAMLIVE_USER / CAMLIVE_PASSWORD | 设置密码后全站需要登录; 留空不启用 |
 | WEBRTC_URL | WebRTC 播放页模板, 默认 `http://{host}:8889/{id}/` |
 | LIGHT_API_URL | 主机侧补光灯 light_api.py 地址 |
@@ -88,13 +88,14 @@
 ## 常见问题
 
 - 画质差/卡: 调低分辨率或码率; 用 MJPEG 模式看延迟
-- 摄像头不在列表: `v4l2-ctl --list-devices` 查节点, 改 cameras.json 的 device 并重启容器
+- 摄像头不在列表: 设置页「设备」输入框会列出容器内能看到的 /dev/video*; 没有的话检查 compose.yml 的 devices 映射
+- 暂停/取消打印无效: 用设置页的「测试连接」确认打印机地址; Moonraker 若开启了鉴权, 需要把 camlive 所在主机加入 trusted_clients
 - 重启容器后摄像头异常: 容器会自动 USB 重置自愈, 等待 ~1 分钟
 - 无核显/AMD 机器: 删除 compose.yml 中 /dev/dri 行, 自动用软编码
 
 ## 分享给他人前注意
 
-- `config/cameras.json` 是你的实际配置(设备路径/打印机 IP), 不要直接发给别人
+- 实际配置在 `config/data/`(含密码哈希), 不要发给别人
 - 别人只需 `mkdir config` 启动, 会自动拿到**通用模板**(config.example), 再按需编辑
 - 容器每次启动会补齐 /app 里缺失的程序文件(不覆盖已有文件)
 - `usb_vendor/usb_reset` 默认关闭: 不配置就不会对未知设备做 USB 重置

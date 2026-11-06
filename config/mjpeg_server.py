@@ -22,7 +22,7 @@ import threading
 import time
 
 cid, dev, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
-with open("/app/cameras.json") as f:
+with open(os.environ.get("CAMLIVE_CAMS", "/app/cameras.json")) as f:
     cam = next(c for c in json.load(f) if c["id"] == cid)
 W, H, FPS = int(cam.get("width", 1280)), int(cam.get("height", 720)), int(cam.get("fps", 25))
 

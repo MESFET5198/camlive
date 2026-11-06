@@ -1,9 +1,9 @@
 # camlive 使用说明:
 #   1. mkdir -p config (可空, 首次启动自动填充默认配置)
 #   2. 按你的机器修改 devices 段(摄像头设备节点, 数量可能不同)
-#   3. 编辑 config/cameras.json (相机名称/设备路径/打印机地址)
-#   4. cp .env.example .env 并填写 HOST_IP(WebRTC 用)、可选访问密码
-#   5. docker compose up -d
+#   3. docker compose up -d, 打开 http://<IP>:8081 → 右上角「设置」
+#      在网页里填写摄像头、打印机地址、局域网 IP、访问密码等(保存在 config/ 下)
+#   4. (可选) .env 只用来给出初始默认值, 见 .env.example
 services:
   camlive:
     image: camlive:generic
@@ -36,6 +36,8 @@ services:
       # WebRTC 播放页地址模板, 见 .env.example
       - WEBRTC_URL=${WEBRTC_URL:-http://{host}:8889/{id}/}
       - MEDIAMTX_RTSP=rtsp://mediamtx:8554
+      - MEDIAMTX_API=http://mediamtx:9997
+      - HOST_IP=${HOST_IP:-}
   mediamtx:
     image: bluenviron/mediamtx:1.15.0
     container_name: camlive-mediamtx

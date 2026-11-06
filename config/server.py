@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import base64
 import glob
-import hmac
 import json
 import os
 import re
@@ -15,7 +14,24 @@ import urllib.request
 import time
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
-CAMS_FILE = "/app/cameras.json"
+import camsettings
+
+# 运行时配置放在 /app/data(不纳入 git), WebUI 修改的就是这里;
+# 首次启动时从 /app/cameras.json 复制一份作为初始配置。
+DATA_DIR = os.environ.get("CAMLIVE_DATA", "/app/data")
+SEED_CAMS = "/app/cameras.json"
+CAMS_FILE = os.path.join(DATA_DIR, "cameras.json")
+
+
+def init_data_dir():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    if not os.path.exists(CAMS_FILE) and os.path.exists(SEED_CAMS):
+        shutil.copyfile(SEED_CAMS, CAMS_FILE)
+        print("[init] 从 %s 初始化运行配置 %s" % (SEED_CAMS, CAMS_FILE), flush=True)
+    # 子进程(run_stream.sh/cam_conf.py/mjpeg_server.py)通过环境变量找到同一份配置
+    os.environ["CAMLIVE_CAMS"] = CAMS_FILE
+    os.environ.setdefault("CAMLIVE_SETTINGS", os.path.join(DATA_DIR, "settings.json"))
+    camsettings.SETTINGS_FILE = os.environ["CAMLIVE_SETTINGS"]
 WEBROOT = "/app"
 LOGDIR = "/app/logs"
 
@@ -29,14 +45,12 @@ LIGHT_AUTOMATION = None  # LightAutomation 实例, 启动时创建
 TIMELAPSE_ROOT = "/timelapse"
 TIMELAPSE_FPS = 30
 TIMELAPSE_INTERVAL = 4
-LIGHT_API_URL = os.environ.get("LIGHT_API_URL", "http://127.0.0.1:8788").rstrip("/")
 LIGHT_MAX_BRIGHTNESS = 191  # 75% of 255; enforced by camlive before forwarding
 
-# 访问控制: 设置 CAMLIVE_PASSWORD 后所有页面/接口都需要 HTTP Basic 认证
-AUTH_USER = os.environ.get("CAMLIVE_USER", "admin")
-AUTH_PASSWORD = os.environ.get("CAMLIVE_PASSWORD", "")
-# WebRTC 播放页地址模板; {host} 替换为浏览器访问的主机名, {id} 为摄像头 id
-WEBRTC_URL = os.environ.get("WEBRTC_URL", "http://{host}:8889/{id}/")
+# 访问密码、WebRTC 地址、补光灯地址、局域网 IP 等系统设置见 camsettings.py:
+# WebUI 设置页保存到 settings.json, 未设置时回退到环境变量(.env)。
+# mediamtx 控制 API(仅 docker 内网可达), 用于把 WebUI 中设置的局域网 IP 下发给 mediamtx
+MEDIAMTX_API = os.environ.get("MEDIAMTX_API", "http://mediamtx:9997").rstrip("/")
 # 只允许下载这些静态文件; cameras.json、源码、日志等一律 404
 STATIC_ALLOW = re.compile(r"^/(?:index\.html|hls\.js|favicon\.ico|vendor/[\w.\-]+\.js|[\w\-]+\.m3u8|[\w\-]+\.ts)?$")
 
@@ -44,7 +58,8 @@ STATIC_ALLOW = re.compile(r"^/(?:index\.html|hls\.js|favicon\.ico|vendor/[\w.\-]
 def light_request(path, method="GET", body=None, timeout=3):
     """访问可选的主机侧 STM32 HID REST 桥接，不直接操作 HID。"""
     data = json.dumps(body).encode() if body is not None else None
-    req = urllib.request.Request(LIGHT_API_URL + path, data=data, method=method)
+    req = urllib.request.Request(camsettings.get("light_api_url").rstrip("/") + path,
+                                 data=data, method=method)
     if data is not None:
         req.add_header("Content-Type", "application/json")
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -182,6 +197,12 @@ class PrinterMonitor:
 
     def _loop(self, url):
         while True:
+            # 打印机地址在 WebUI 中被修改/删除后, 旧地址的轮询线程自行退出
+            if not any(c.get("printer") == url for c in load_cams()):
+                with self.lock:
+                    self.threads.pop(url, None)
+                    self.cache.pop(url, None)
+                return
             started = time.monotonic()
             self._poll(url)
             time.sleep(max(0.5, PRINTER_POLL - (time.monotonic() - started)))
@@ -877,6 +898,31 @@ class TimelapseManager:
         self.watch()
 
 
+AUTH_OK = {}  # 已验证的 Authorization 头 -> 过期时间
+MEDIAMTX_STATE = {"ok": None, "hosts": None, "error": None}
+
+
+def sync_mediamtx():
+    """把 WebUI 设置的局域网 IP 下发到 mediamtx(webrtcAdditionalHosts)。
+    mediamtx 重启后会丢失, 所以 watchdog 也会定期调用。未在 WebUI 设置时不改动 mediamtx。"""
+    if camsettings.source("host_ip") != "webui":
+        MEDIAMTX_STATE.update(ok=None, hosts=None, error=None)
+        return
+    want = [h.strip() for h in str(camsettings.get("host_ip")).split(",") if h.strip()]
+    try:
+        cur = http_json(MEDIAMTX_API + "/v3/config/global/get", timeout=3).get("webrtcAdditionalHosts") or []
+        if sorted(cur) != sorted(want):
+            body = json.dumps({"webrtcAdditionalHosts": want}).encode()
+            req = urllib.request.Request(MEDIAMTX_API + "/v3/config/global/patch", data=body, method="PATCH")
+            req.add_header("Content-Type", "application/json")
+            with urllib.request.urlopen(req, timeout=3) as r:
+                r.read()
+            print("[mediamtx] webrtcAdditionalHosts -> %s" % want, flush=True)
+        MEDIAMTX_STATE.update(ok=True, hosts=want, error=None)
+    except Exception as e:
+        MEDIAMTX_STATE.update(ok=False, hosts=want, error=str(e))
+
+
 class Handler(SimpleHTTPRequestHandler):
     def __init__(self, *a, **kw):
         super().__init__(*a, directory=WEBROOT, **kw)
@@ -894,14 +940,21 @@ class Handler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def _authorized(self):
-        if not AUTH_PASSWORD:
+        if not camsettings.auth_mode()[0]:
             return True
         h = self.headers.get("Authorization", "")
         if h.startswith("Basic "):
+            # 密码用 PBKDF2 存储, 校验较慢; 对已验证过的请求头做短时缓存(HLS 每秒都有请求)
+            key = (h, camsettings.load().get("auth_password_hash"), camsettings.get("auth_user"))
+            now = time.time()
+            if AUTH_OK.get(key, 0) > now:
+                return True
             try:
                 user, _, pw = base64.b64decode(h[6:]).decode("utf-8").partition(":")
-                if hmac.compare_digest(user.encode(), AUTH_USER.encode()) and \
-                        hmac.compare_digest(pw.encode(), AUTH_PASSWORD.encode()):
+                if camsettings.check_password(user, pw):
+                    if len(AUTH_OK) > 256:
+                        AUTH_OK.clear()
+                    AUTH_OK[key] = now + 600
                     return True
             except Exception:
                 pass
@@ -959,8 +1012,14 @@ class Handler(SimpleHTTPRequestHandler):
             return
         path = urllib.parse.urlsplit(self.path).path
         if path == "/api/info":
-            self._json({"webrtc_url": WEBRTC_URL, "auth": bool(AUTH_PASSWORD),
+            self._json({"webrtc_url": camsettings.get("webrtc_url"),
+                        "auth": camsettings.auth_mode()[0],
                         "light_max_brightness": LIGHT_MAX_BRIGHTNESS})
+            return
+        if path == "/api/settings":
+            self._json({"system": camsettings.public_system(), "cameras": load_cams(),
+                        "devices": camsettings.list_devices(),
+                        "mediamtx": MEDIAMTX_STATE})
             return
         if path == "/api/light/health":
             try:
@@ -1082,8 +1141,125 @@ class Handler(SimpleHTTPRequestHandler):
             return
         self._static(path)
 
+    def _body(self):
+        try:
+            n = int(self.headers.get("Content-Length", 0))
+            if n > 65536:
+                raise ValueError("body too large")
+            d = json.loads(self.rfile.read(n) or b"{}")
+            if not isinstance(d, dict):
+                raise ValueError("json object required")
+            return d
+        except Exception:
+            self._json({"error": "bad json"}, 400)
+            return None
+
+    def do_DELETE(self):
+        if not self._authorized():
+            return
+        m = re.match(r"^/api/settings/cameras/([^/]+)$", urllib.parse.urlsplit(self.path).path)
+        if not m:
+            self._json({"error": "not found"}, 404)
+            return
+        cid = m.group(1)
+        with CAMS_LOCK:
+            cams = load_cams()
+            if not any(c.get("id") == cid for c in cams):
+                self._json({"error": "no such camera"}, 404)
+                return
+            new = [c for c in cams if c.get("id") != cid]
+        save_cams(new)
+        STREAMS.stop_cam(cid)
+        STREAMS.sleeping.pop(cid, None)
+        if TIMELAPSE is not None and cid in TIMELAPSE.active:
+            TIMELAPSE.stop({"id": cid})
+        print("[settings] 删除摄像头 %s" % cid, flush=True)
+        self._json({"ok": True})
+
+    def _settings_post(self, path):
+        """WebUI 设置页: 系统设置 / 摄像头增删改 / 测试打印机"""
+        req = self._body()
+        if req is None:
+            return
+        if path == "/api/settings/system":
+            s, err = camsettings.update_system(req)
+            if err:
+                self._json({"error": err}, 400)
+                return
+            threading.Thread(target=sync_mediamtx, daemon=True).start()
+            print("[settings] 系统设置已更新", flush=True)
+            self._json({"ok": True, "system": camsettings.public_system()})
+            return
+        if path == "/api/settings/test-printer":
+            url = str(req.get("url") or "").strip().rstrip("/")
+            cam, err = camsettings.clean_camera({"printer": url, "device": "/dev/null"})
+            if err:
+                self._json({"error": err}, 400)
+                return
+            url = cam.get("printer", "")
+            try:
+                info = http_json(url + "/printer/info", timeout=5).get("result") or {}
+                st = (PrinterMonitor()._parse(url, http_json(url + PRINTER_QUERY)["result"]["status"])
+                      if info else {})
+                self._json({"ok": True, "url": url, "state": info.get("state"),
+                            "hostname": info.get("hostname"),
+                            "version": info.get("software_version"),
+                            "print_state": st.get("state")})
+            except Exception as e:
+                self._json({"error": "连接 %s 失败: %s" % (url, e)}, 502)
+            return
+        if path == "/api/settings/cameras":
+            cid = str(req.get("id") or "").strip().lower()
+            if not camsettings.ID_RE.match(cid):
+                self._json({"error": "ID 只能用小写字母、数字、_ 和 -, 最长 32 位"}, 400)
+                return
+            if get_cam(cid):
+                self._json({"error": "ID %s 已存在" % cid}, 400)
+                return
+            cam, err = camsettings.clean_camera(req, {"id": cid})
+            if err:
+                self._json({"error": err}, 400)
+                return
+            with CAMS_LOCK:
+                cams = load_cams()
+            cams.append(cam)
+            save_cams(cams)
+            STREAMS.start_cam(cam)
+            print("[settings] 新增摄像头 %s" % cid, flush=True)
+            self._json({"ok": True, "camera": cam})
+            return
+        m = re.match(r"^/api/settings/cameras/([^/]+)$", path)
+        if m:
+            cid = m.group(1)
+            old = get_cam(cid)
+            if not old:
+                self._json({"error": "no such camera"}, 404)
+                return
+            cam, err = camsettings.clean_camera(req, old)
+            if err:
+                self._json({"error": err}, 400)
+                return
+            with CAMS_LOCK:
+                cams = load_cams()
+            cams = [cam if c.get("id") == cid else c for c in cams]
+            save_cams(cams)
+            restart = any(old.get(k) != cam.get(k) for k in camsettings.STREAM_FIELDS)
+            if restart and not STREAMS.sleeping.get(cid):
+                STREAMS.start_cam(cam)
+            if old.get("light_auto") and not cam.get("light_auto") and LIGHT_AUTOMATION:
+                LIGHT_AUTOMATION.wants.pop(cid, None)
+            _NAME_CACHE.pop(old.get("device"), None)
+            print("[settings] 更新摄像头 %s%s" % (cid, ", 重启推流" if restart else ""), flush=True)
+            self._json({"ok": True, "camera": cam, "restarted": restart})
+            return
+        self._json({"error": "not found"}, 404)
+
     def do_POST(self):
         if not self._authorized():
+            return
+        path = urllib.parse.urlsplit(self.path).path
+        if path.startswith("/api/settings/"):
+            self._settings_post(path)
             return
         m = re.match(r"^/api/light/(power|brightness|color)$", self.path)
         if m:
@@ -1122,9 +1298,11 @@ class Handler(SimpleHTTPRequestHandler):
                 self._json({"error": "cmd must be pause/resume/cancel"}, 400)
                 return
             try:
+                # Moonraker 接口是 /printer/print/{pause,resume,cancel}
+                # (以前写成 /printer/pause, 一直 404, 导致暂停/取消无效)
                 with urllib.request.urlopen(urllib.request.Request(
-                        cam["printer"] + "/printer/" + cmd, method="POST"),
-                        timeout=5) as r:
+                        cam["printer"] + "/printer/print/" + cmd, data=b"", method="POST"),
+                        timeout=10) as r:
                     r.read()
                 self._json({"ok": True})
             except Exception as e:
@@ -1294,6 +1472,7 @@ class Handler(SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     port = int(sys.argv[1]) if len(sys.argv) > 1 else 8081
+    init_data_dir()
     STREAMS = StreamManager()
     PRINTERS = PrinterMonitor()
     TIMELAPSE = TimelapseManager()
@@ -1312,9 +1491,13 @@ if __name__ == "__main__":
                 TIMELAPSE.last_state[cam["id"]] = st
 
     def watchdog():
+        n = 0
         while True:
             time.sleep(3)
             STREAMS.check()
+            n += 1
+            if n % 20 == 1:  # ~1 分钟同步一次 mediamtx 设置
+                sync_mediamtx()
 
     threading.Thread(target=watchdog, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", port), Handler).serve_forever()
